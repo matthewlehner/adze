@@ -278,14 +278,15 @@ defmodule Adze.Extract do
     source_mod = string_to_module(single.source_module)
     target_mod = string_to_module(single.target_module)
 
-    Enum.reduce_while(single.public_closure_keys, {:ok, rewrite}, fn {name, arity}, {:ok, rw} ->
-      case ProjectRewrite.rename_function(rw, {source_mod, name}, {target_mod, name},
-             arity: arity
-           ) do
-        {:ok, rw} -> {:cont, {:ok, rw}}
-        err -> {:halt, err}
-      end
-    end)
+    {:ok,
+     Enum.reduce(single.public_closure_keys, rewrite, fn {name, arity}, rw ->
+       {:ok, rw} =
+         ProjectRewrite.rename_function(rw, {source_mod, name}, {target_mod, name},
+           arity: arity
+         )
+
+       rw
+     end)}
   end
 
   defp string_to_module(str) when is_binary(str), do: Module.concat(String.split(str, "."))
@@ -917,10 +918,6 @@ defmodule Adze.Extract do
 
   # --- caller rewriting --------------------------------------------------
 
-  defp build_rewrite_ops(_all_defs, _source_module, _closure_keys, rewrite_keys, _target_atom)
-       when map_size(rewrite_keys) == 0,
-       do: []
-
   defp build_rewrite_ops(all_defs, source_module, closure_keys, rewrite_keys, target_alias_atom) do
     all_defs
     |> Enum.filter(&(&1.module == source_module))
@@ -962,6 +959,15 @@ defmodule Adze.Extract do
   # Used in two directions: target-bound rewriting of extracted bodies
   # (one-atom alias) and source-staying rewriting of survivor bodies
   # whose calls now have to cross modules (full-path).
+  # Attributes (@spec, @doc, @type, etc.) live in a different namespace
+  # than function calls -- a local type or literal value that happens to
+  # share a name/arity with an extracted function must never be treated
+  # as a call to it. Type qualification for @spec/@callback/@macrocallback
+  # is handled separately by Adze.Types.qualify/3; every other attribute
+  # is left untouched. This clause must come first so it takes precedence
+  # over the map_size(keys) == 0 short-circuit and the generic clause below.
+  defp rewrite_def_body({:@, _, _} = node, _keys, _target_parts), do: {node, false}
+
   defp rewrite_def_body(node, keys, _target_parts) when map_size(keys) == 0,
     do: {node, false}
 
