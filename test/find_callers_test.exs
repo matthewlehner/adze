@@ -288,27 +288,29 @@ defmodule Adze.FindCallersTest do
       assert Map.has_key?(result_files, "lib/caller.ex")
     end
 
-    test "alias __MODULE__.Inner declaration is silently skipped" do
+    test "alias __MODULE__.Inner declaration resolves Inner.fun(...) calls" do
       files = %{
         "lib/x.ex" => """
         defmodule X do
           defmodule Inner do
-            def thing, do: :ok
+            def thing(x), do: x
           end
 
           alias __MODULE__.Inner
-          def go, do: Inner.thing()
+          def go(x), do: Inner.thing(x)
         end
         """
       }
 
-      # The bare `Inner.thing()` call can't be resolved (we skipped the
-      # __MODULE__-based alias declaration), so the call doesn't match
-      # the fully-qualified target. No crash, no false positive.
-      assert {:ok, %{total: 0}} = FindCallers.find_callers("X.Inner.thing/0", files: files)
+      assert {:ok, %{total: 1, files: result_files}} =
+               FindCallers.find_callers("X.Inner.thing/1", files: files)
+
+      [c] = result_files["lib/x.ex"]
+      assert c.kind == :call
+      assert c.snippet =~ "Inner.thing(x)"
     end
 
-    test "captures targeting __MODULE__.Inner.fn don't crash" do
+    test "captures targeting &__MODULE__.Inner.fun/arity resolve" do
       files = %{
         "lib/x.ex" => """
         defmodule X do
@@ -321,7 +323,31 @@ defmodule Adze.FindCallersTest do
         """
       }
 
-      assert {:ok, %{total: 0}} = FindCallers.find_callers("X.Inner.thing/1", files: files)
+      assert {:ok, %{total: 1, files: result_files}} =
+               FindCallers.find_callers("X.Inner.thing/1", files: files)
+
+      [c] = result_files["lib/x.ex"]
+      assert c.kind == :capture
+    end
+
+    test "qualified __MODULE__.Inner.fun(...) call without an alias resolves" do
+      files = %{
+        "lib/x.ex" => """
+        defmodule X do
+          defmodule Inner do
+            def thing(x), do: x
+          end
+
+          def go(x), do: __MODULE__.Inner.thing(x)
+        end
+        """
+      }
+
+      assert {:ok, %{total: 1, files: result_files}} =
+               FindCallers.find_callers("X.Inner.thing/1", files: files)
+
+      [c] = result_files["lib/x.ex"]
+      assert c.kind == :call
     end
   end
 

@@ -15,6 +15,10 @@ defmodule Adze.FindCallers do
     * **Aliased references** — `alias Foo.Bar` then `Bar.fun(...)`, and
       `alias Foo, as: F` then `F.fun(...)`, and brace-form
       `alias Foo.{Bar, Baz}`.
+    * **`__MODULE__`-relative references** — `alias __MODULE__.Inner` then
+      `Inner.fun(...)`, and fully-qualified `__MODULE__.Inner.fun(...)`
+      (with or without an alias), resolved against the innermost
+      enclosing `defmodule`.
 
   Not yet handled (intentional v1 limits):
 
@@ -156,49 +160,72 @@ defmodule Adze.FindCallers do
 
   # --- per-file alias resolution -----------------------------------------
 
+  # Tracks the enclosing `defmodule` scope while walking so that
+  # `alias __MODULE__.Inner` can be resolved against the module it
+  # actually appears in (mirrors the scope tracking `walk_for_target`
+  # already does for refs).
   defp build_alias_table(ast) do
-    {_, table} =
-      Macro.prewalk(ast, %{}, fn
-        {:alias, _, args} = node, acc -> {node, register_alias(acc, args)}
-        node, acc -> {node, acc}
-      end)
+    {_, %{table: table}} =
+      Macro.traverse(
+        ast,
+        %{table: %{}, scope: []},
+        fn
+          {:defmodule, _, [alias_ast, _]} = node, acc ->
+            name = qualify_scope(acc.scope, alias_name(alias_ast))
+            {node, %{acc | scope: [name | acc.scope]}}
+
+          {:alias, _, args} = node, acc ->
+            {node, %{acc | table: register_alias(acc.table, args, acc.scope)}}
+
+          node, acc ->
+            {node, acc}
+        end,
+        fn
+          {:defmodule, _, _} = node, acc -> {node, %{acc | scope: tl(acc.scope)}}
+          node, acc -> {node, acc}
+        end
+      )
 
     table
   end
 
-  # alias Foo.Bar (skipped when parts contain non-atom AST nodes —
-  # e.g. `alias __MODULE__.Inner` — since we can't statically build a
-  # stable lookup key for those).
-  defp register_alias(table, [{:__aliases__, _, parts}])
+  # alias Foo.Bar (skipped when parts contain non-atom AST nodes we
+  # can't statically resolve — `__MODULE__`-prefixed parts are
+  # substituted via `normalize_parts/2` before this check).
+  defp register_alias(table, [{:__aliases__, _, parts}], scope)
        when is_list(parts) do
-    if Enum.all?(parts, &is_atom/1),
-      do: Map.put(table, last_str(parts), join_parts(parts)),
-      else: table
+    case normalize_parts(parts, scope) do
+      nil -> table
+      normalized -> Map.put(table, last_str(normalized), join_parts(normalized))
+    end
   end
 
   # alias Foo.Bar, as: Baz   /   alias Foo.Bar, warn: false (no rebinding)
-  defp register_alias(table, [{:__aliases__, _, parts}, kw])
+  defp register_alias(table, [{:__aliases__, _, parts}, kw], scope)
        when is_list(parts) and is_list(kw) do
-    cond do
-      not Enum.all?(parts, &is_atom/1) ->
+    case normalize_parts(parts, scope) do
+      nil ->
         table
 
-      true ->
-        full = join_parts(parts)
+      normalized ->
+        full = join_parts(normalized)
 
         case extract_as_atom(kw) do
-          nil -> Map.put(table, last_str(parts), full)
+          nil -> Map.put(table, last_str(normalized), full)
           as_atom -> Map.put(table, Atom.to_string(as_atom), full)
         end
     end
   end
 
-  # alias Foo.{A, B, C.D}
-  defp register_alias(table, [{{:., _, [base, :{}]}, _, members}]) do
+  # alias Foo.{A, B, C.D}  (and __MODULE__.{A, B})
+  defp register_alias(table, [{{:., _, [base, :{}]}, _, members}], scope) do
     base_parts =
       case base do
         {:__aliases__, _, parts} when is_list(parts) ->
-          if Enum.all?(parts, &is_atom/1), do: parts, else: nil
+          case normalize_parts(parts, scope) do
+            nil -> nil
+            normalized -> if Enum.all?(normalized, &is_atom/1), do: normalized, else: nil
+          end
 
         _ ->
           nil
@@ -226,7 +253,7 @@ defmodule Adze.FindCallers do
     end
   end
 
-  defp register_alias(table, _), do: table
+  defp register_alias(table, _, _), do: table
 
   defp extract_as_atom(kw) do
     Enum.find_value(kw, fn
@@ -302,7 +329,7 @@ defmodule Adze.FindCallers do
           when is_atom(fun) ->
             arity = unwrap_int(arity_ast)
 
-            if match_call(parts, fun, arity, aliases, target) do
+            if match_call(parts, fun, arity, aliases, target, acc.scope) do
               {node, push_ref(acc, node, :capture, arity, lines)}
             else
               {node, acc}
@@ -313,7 +340,7 @@ defmodule Adze.FindCallers do
           when is_atom(fun) and is_list(args) ->
             arity = length(args)
 
-            if match_call(parts, fun, arity, aliases, target) do
+            if match_call(parts, fun, arity, aliases, target, acc.scope) do
               {node, push_ref(acc, node, :call, arity, lines)}
             else
               {node, acc}
@@ -353,23 +380,41 @@ defmodule Adze.FindCallers do
   defp alias_name(atom) when is_atom(atom), do: inspect(atom)
   defp alias_name(_), do: "?"
 
-  defp match_call(parts, fun, arity, aliases, target) do
-    case resolve_parts(parts, aliases) do
+  defp match_call(parts, fun, arity, aliases, target, scope) do
+    case normalize_parts(parts, scope) do
       nil ->
         false
 
-      resolved ->
-        resolved == target.module and
-          fun == target.function and
-          (target.arity == :any or arity == target.arity)
+      normalized ->
+        case resolve_parts(normalized, aliases) do
+          nil ->
+            false
+
+          resolved ->
+            resolved == target.module and
+              fun == target.function and
+              (target.arity == :any or arity == target.arity)
+        end
     end
   end
 
-  # `__aliases__` parts are *usually* a list of atoms, but Elixir allows
-  # the first element to be an AST node like `{:__MODULE__, _, nil}` for
-  # `__MODULE__.Inner` references, or any expression that returns a
-  # module (rare but legal). We can't statically resolve those — return
-  # `nil` so the caller treats this as "doesn't match the target."
+  # Substitutes a leading `{:__MODULE__, _, ctx}` part with the parts of
+  # the innermost-enclosing module (from `scope`), so refs like
+  # `__MODULE__.Inner.thing(...)` resolve the same way as a plain
+  # `Inner.thing(...)` alias lookup would. Any other non-atom leading
+  # part (an arbitrary expression that evaluates to a module — rare but
+  # legal) still can't be resolved statically, so we return `nil`.
+  defp normalize_parts([{:__MODULE__, _, ctx} | rest], scope) when is_atom(ctx) do
+    case scope do
+      [] -> nil
+      [current | _] -> String.split(current, ".") |> Enum.map(&String.to_atom/1) |> Kernel.++(rest)
+    end
+  end
+
+  defp normalize_parts(parts, _scope) do
+    if Enum.all?(parts, &is_atom/1), do: parts, else: nil
+  end
+
   defp resolve_parts(parts, aliases) do
     if Enum.all?(parts, &is_atom/1) do
       [first | rest] = parts
