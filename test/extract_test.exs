@@ -898,6 +898,33 @@ defmodule AdzeExtractTest do
       assert {:ok, _} = Code.string_to_quoted(result.target_content)
     end
 
+    test "does not qualify a bare type reference in an extracted @spec as a call to a source-staying function" do
+      # go/1 body bare-calls the source-staying update/1, so extraction
+      # takes the AST-rewriting path (try_rewrite_source_local) to
+      # qualify that call. Its @spec also mentions a same-named,
+      # same-arity (1) type reference -- the call-qualifying walker
+      # must not touch the @spec, only the def clause body.
+      source = ~S"""
+      defmodule MyApp.Source do
+        def update(id), do: {:ok, id}
+
+        @spec go(integer()) :: update(integer())
+        def go(id), do: update(id)
+      end
+      """
+
+      {:ok, result} =
+        Extract.extract(source,
+          definition: "go/1",
+          module: "MyApp.Go",
+          path: "/tmp/__nonexistent_target__.ex"
+        )
+
+      assert result.target_content =~ ~r/def go\(id\), do: MyApp\.Source\.update\(id\)/
+      refute result.target_content =~ ~r/@spec go\(integer\(\)\) :: MyApp\.Source\.update\(integer\(\)\)/
+      assert {:ok, _} = Code.string_to_quoted(result.target_content)
+    end
+
     test "slice-from-source preserves comments when no qualification needed" do
       # Regression guard: introducing the new AST-rendering trigger
       # must not break the verbatim-slice path for defs that don't
@@ -1053,6 +1080,35 @@ defmodule AdzeExtractTest do
         )
 
       assert result.target_content =~ ~r/MyApp\.Source\.wrap\(MyApp\.Source\.id\(\)\)/
+    end
+
+    test "does not rewrite a local type reference in a surviving @spec when its name collides with an extracted function" do
+      # `target/0` is being extracted into `Extracted.Target`. The
+      # surviving `other/1` has an @spec referencing the *type* `target()`
+      # — a different namespace from the function `target/0`. The type
+      # reference must stay bare (or be qualified as a type, never as a
+      # remote function call to `Extracted.Target.target()`).
+      source = """
+      defmodule Source do
+        @type target :: integer()
+
+        @spec other(integer()) :: target()
+        def other(x), do: x
+
+        def target(), do: 42
+      end
+      """
+
+      {:ok, result} =
+        Extract.extract(source,
+          definition: "target/0",
+          module: "Extracted.Target",
+          path: "/tmp/__nonexistent_typecollide__.ex"
+        )
+
+      refute result.new_source =~ ~r/Target\.target\(\)/
+      assert result.new_source =~ ~r/@spec other\(integer\(\)\) :: target\(\)/
+      assert {:ok, _} = Code.string_to_quoted(result.new_source)
     end
   end
 
