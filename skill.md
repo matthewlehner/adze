@@ -1,3 +1,8 @@
+---
+name: adze
+description: Structural Elixir refactoring and outline-first reading via Mix tasks. Use for reading large Elixir files (ls/outline), renaming modules, extracting functions into new modules, reordering definitions, finding callers, and privatizing helpers.
+---
+
 # adze
 
 Structural Elixir refactoring + outline-first reading. Built on Sourceror
