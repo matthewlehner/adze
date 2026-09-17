@@ -33,13 +33,13 @@ defmodule Adze.MixProject do
       {:sourceror, "~> 1.7"},
       {:igniter, "~> 0.8"},
       {:ex_doc, "~> 0.35", only: :dev, runtime: false},
-      {:usage_rules, "~> 0.1", only: [:dev]}
+      {:usage_rules, "~> 1.2", only: [:dev]}
     ]
   end
 
   defp docs do
     [
-      main: "Adze",
+      main: "readme",
       source_ref: "v#{@version}",
       source_url: @source_url,
       extras: ["README.md", "CHANGELOG.md", "LICENSE"],
