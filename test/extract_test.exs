@@ -693,6 +693,26 @@ defmodule AdzeExtractTest do
     end
   end
 
+  describe "extract/2 - formatting failures surface as error tuples" do
+    test "malformed formatter_opts surfaces as {:error, {:format, _}} instead of raising" do
+      source = """
+      defmodule MyApp.Source do
+        def keep, do: :keep
+
+        def victim, do: :victim
+      end
+      """
+
+      assert {:error, {:format, %FunctionClauseError{}}} =
+               Extract.extract(source,
+                 definition: "victim/0",
+                 module: "MyApp.Victim",
+                 path: "/tmp/__nonexistent_target__.ex",
+                 formatter_opts: [line_length: "not_an_integer"]
+               )
+    end
+  end
+
   describe "extract/2 — __MODULE__ rewriting in def bodies" do
     # __MODULE__ inside a def body resolves to the enclosing module at
     # compile time. After extraction the enclosing module is the new

@@ -41,9 +41,9 @@ defmodule Adze.Move do
          {:ok, src_def} <- find_labeled(source, def_spec, opts, :definition),
          {:ok, tgt_def} <- find_labeled(source, before_spec, opts, :before),
          :ok <- check_not_self(src_def, tgt_def),
-         :ok <- check_same_module(src_def, tgt_def) do
-      moved = perform_move(source, src_def, tgt_def)
-      formatted = reformat(moved)
+         :ok <- check_same_module(src_def, tgt_def),
+         moved = perform_move(source, src_def, tgt_def),
+         {:ok, formatted} <- reformat(moved) do
       {:ok, %{diff: Adze.Diff.unified(source, formatted), new_source: formatted}}
     end
   end
@@ -155,6 +155,9 @@ defmodule Adze.Move do
       |> Code.format_string!()
       |> IO.iodata_to_binary()
 
-    if String.ends_with?(formatted, "\n"), do: formatted, else: formatted <> "\n"
+    result = if String.ends_with?(formatted, "\n"), do: formatted, else: formatted <> "\n"
+    {:ok, result}
+  rescue
+    e -> {:error, {:format, e}}
   end
 end

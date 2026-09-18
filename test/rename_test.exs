@@ -453,5 +453,44 @@ defmodule AdzeRenameTest do
       # And the result still carries the diff/move metadata.
       assert result.moves != %{}
     end
+
+    # Regression coverage for the formatting-exceptions audit (issue
+    # 3): ProjectRewrite.write/1 (the non-raising counterpart to
+    # write!/1) converts File.Error into {:error, {:file_write,
+    # reason}} instead of raising. rename!/1 uses it internally, so a
+    # write failure comes back as a clean error tuple rather than an
+    # exception escaping to the caller.
+    @tag :tmp_dir
+    test "returns {:error, {:file_write, _}} when the target file can't be written", %{
+      tmp_dir: tmp
+    } do
+      File.mkdir_p!(Path.join(tmp, "lib/my_app"))
+
+      File.write!(Path.join(tmp, "mix.exs"), """
+      defmodule My.MixProject do
+        use Mix.Project
+        def project, do: [app: :my_app, version: "0.1.0", elixir: "~> 1.19", deps: []]
+      end
+      """)
+
+      File.write!(Path.join(tmp, "lib/my_app/old.ex"), """
+      defmodule MyApp.Old do
+        def hello, do: :world
+      end
+      """)
+
+      # Make the directory read-only so Rewrite.write_all/1 can't
+      # create the new file inside it.
+      File.chmod!(Path.join(tmp, "lib/my_app"), 0o555)
+
+      on_exit(fn -> File.chmod(Path.join(tmp, "lib/my_app"), 0o755) end)
+
+      assert {:error, {:file_write, _reason}} =
+               Rename.rename!(
+                 from: "MyApp.Old",
+                 to: "MyApp.New",
+                 mix_root: tmp
+               )
+    end
   end
 end

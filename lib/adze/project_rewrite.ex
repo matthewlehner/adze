@@ -248,9 +248,15 @@ defmodule Adze.ProjectRewrite do
          survivors when survivors != [] <- collect_short_refs(ast, old_short, path) do
       if pre_rewrite_had_bare_alias?(source, old_short) do
         new_ast = rewrite_short(ast, old_short, new_short)
-        new_content = render(new_ast)
-        updated = Rewrite.Source.update(source, :content, new_content)
-        {:fix, updated, survivors}
+
+        case render(new_ast) do
+          {:ok, new_content} ->
+            updated = Rewrite.Source.update(source, :content, new_content)
+            {:fix, updated, survivors}
+
+          {:error, _reason} ->
+            {:keep, survivors}
+        end
       else
         {:keep, survivors}
       end
@@ -354,7 +360,10 @@ defmodule Adze.ProjectRewrite do
   # path, which only rewrites `__aliases__` segments.
   defp render(ast) do
     rendered = Sourceror.to_string(ast, locals_without_parens: [])
-    if String.ends_with?(rendered, "\n"), do: rendered, else: rendered <> "\n"
+    result = if String.ends_with?(rendered, "\n"), do: rendered, else: rendered <> "\n"
+    {:ok, result}
+  rescue
+    e -> {:error, {:render, e}}
   end
 
   defp changed_sources(%__MODULE__{igniter: igniter}) do
@@ -485,6 +494,21 @@ defmodule Adze.ProjectRewrite do
        issues: igniter.issues || [],
        notices: igniter.notices || []
      }}
+  end
+
+  @doc """
+  Flush the rewrite to disk. Same as `write!/1`, but converts
+  filesystem errors (`File.Error`, `File.RenameError`) into
+  `{:error, {:file_write, reason}}` instead of raising. Still raises
+  `ArgumentError` for programmer errors -- test-mode rewrites and
+  rewrites carrying unresolved Igniter issues -- since those indicate
+  a caller bug rather than a recoverable I/O failure.
+  """
+  @spec write(t()) :: :ok | {:error, term()}
+  def write(%__MODULE__{} = rewrite) do
+    write!(rewrite)
+  rescue
+    e in [File.Error, File.RenameError] -> {:error, {:file_write, e.reason}}
   end
 
   @doc """
