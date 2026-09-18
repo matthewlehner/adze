@@ -86,8 +86,8 @@ defmodule Adze.Rename do
     force? = Keyword.get(opts, :force, false)
 
     with {:ok, ctx} <- build(opts),
-         :ok <- guard_surviving(ctx.report.surviving_refs, force?) do
-      :ok = ProjectRewrite.write!(ctx.rewrite)
+         :ok <- guard_surviving(ctx.report.surviving_refs, force?),
+         :ok <- ProjectRewrite.write(ctx.rewrite) do
       {:ok, build_result(ctx)}
     end
   end

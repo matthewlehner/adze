@@ -97,6 +97,9 @@ All errors are tagged tuples. Match on the tag, not the message:
 | `{:error, {:surviving_references, refs}}` | Rename post-check found un-rewritten refs | Fix by hand or pass `--force` |
 | `{:error, :cannot_be_private}` | `defdelegate` has no private form | Don't privatize delegates |
 | `{:error, {:issues, [...]}}` | Igniter refused to write | Read the issue list for details |
+| `{:error, {:format, exception}}` | `Code.format_string!/2` failed on the transformed source | Usually a bad `formatter_opts:` value; check the exception |
+| `{:error, {:render, exception}}` | `Sourceror.to_string/2` failed on the rewritten AST | Indicates a mechanical-transform bug; file an issue |
+| `{:error, {:file_write, reason}}` | Writing the result to disk failed | Check permissions / disk space |
 
 ## Conventions
 

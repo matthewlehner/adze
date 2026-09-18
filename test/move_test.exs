@@ -161,6 +161,21 @@ defmodule AdzeMoveTest do
       source = "defmodule X do\nend\n"
       assert {:error, {:missing_opt, :before}} = Move.mv(source, definition: "foo/0")
     end
+
+    # Regression note for the formatting-exceptions audit (issue 3):
+    # Move.reformat/1 (private) now wraps Code.format_string!/1 in
+    # try/rescue and returns {:error, {:format, exception}} instead of
+    # letting the exception escape mv/2. There is deliberately no
+    # dedicated test here reaching that path through the public API:
+    # malformed source fails earlier, at Definition.find/parse, before
+    # reformat/1 is ever reached, and mv/2 (unlike extract/2) exposes
+    # no formatter_opts knob to poison the formatter call instead.
+    # Every cut/paste shape tried while auditing this (semicolon-joined
+    # defs, heredocs, nested modules, duplicate names, comments
+    # containing the word "end", multi-clause defs, etc.) still
+    # produced syntactically valid output. The rescue clause is
+    # defensive insurance against a cut/paste bug we don't currently
+    # know how to trigger organically, not a reachable-today failure.
   end
 
   describe "mv/2 — diff output" do

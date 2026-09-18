@@ -183,6 +183,8 @@ defmodule Adze.Extract do
          }}
       catch
         {:typep_referenced, info} -> {:error, {:typep_referenced, info}}
+        {:format, exception} -> {:error, {:format, exception}}
+        {:render, exception} -> {:error, {:render, exception}}
       end
     end
   end
@@ -194,8 +196,8 @@ defmodule Adze.Extract do
 
   @spec extract!(Path.t(), opts()) :: {:ok, result()} | {:error, term()}
   def extract!(path, opts) when is_binary(path) do
-    with {:ok, result, rewrite} <- prepare(path, opts) do
-      :ok = ProjectRewrite.write!(rewrite)
+    with {:ok, result, rewrite} <- prepare(path, opts),
+         :ok <- ProjectRewrite.write(rewrite) do
       {:ok, result}
     end
   end
@@ -787,7 +789,11 @@ defmodule Adze.Extract do
   # an explicit empty list. Code.format_string! runs afterward with
   # the project's resolved formatter opts (see resolve_formatter_opts/1)
   # and normalizes the result.
-  defp render_node(node), do: Sourceror.to_string(node, locals_without_parens: [])
+  defp render_node(node) do
+    Sourceror.to_string(node, locals_without_parens: [])
+  rescue
+    e -> throw({:render, e})
+  end
 
   defp slice_node_text(node, source_lines) do
     case Sourceror.get_range(node) do
@@ -1100,5 +1106,7 @@ defmodule Adze.Extract do
       |> IO.iodata_to_binary()
 
     if String.ends_with?(formatted, "\n"), do: formatted, else: formatted <> "\n"
+  rescue
+    e -> throw({:format, e})
   end
 end

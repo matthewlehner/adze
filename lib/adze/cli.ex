@@ -287,6 +287,9 @@ defmodule Adze.CLI do
       {:error, {:file_write, reason}} ->
         die("could not write #{file}: #{:file.format_error(reason)}")
 
+      {:error, {:format, exception}} ->
+        die("formatting failed after the move: #{Exception.message(exception)}")
+
       {:error, {:not_found, :definition}} ->
         die("--definition not found in #{file}")
 
@@ -338,6 +341,12 @@ defmodule Adze.CLI do
 
       {:error, {:file_write, reason}} ->
         die("could not write: #{:file.format_error(reason)}")
+
+      {:error, {:format, exception}} ->
+        die("formatting failed after the extract: #{Exception.message(exception)}")
+
+      {:error, {:render, exception}} ->
+        die("rendering the extracted AST failed: #{Exception.message(exception)}")
 
       {:error, {:parse, reason}} ->
         die("parse error: #{inspect(reason)}")
@@ -410,6 +419,9 @@ defmodule Adze.CLI do
 
       {:error, {:surviving_references, refs}} ->
         die(format_surviving_error(refs))
+
+      {:error, {:file_write, reason}} ->
+        die("could not write: #{:file.format_error(reason)}")
 
       {:error, reason} ->
         die("rename failed: #{inspect(reason)}")
