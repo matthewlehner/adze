@@ -405,6 +405,10 @@ defmodule Adze.Formatter do
       target_content: result.target_content,
       new_source: result.new_source,
       caller_diffs: Map.get(result, :caller_diffs, %{}),
+      promoted:
+        result
+        |> Map.get(:promoted, [])
+        |> Enum.map(fn {name, arity} -> %{name: Atom.to_string(name), arity: arity} end),
       dropped_directives:
         result
         |> Map.get(:dropped_directives, [])
@@ -452,6 +456,25 @@ defmodule Adze.Formatter do
           ]
       end
 
+    promoted_block =
+      case Map.get(result, :promoted, []) do
+        [] ->
+          []
+
+        promoted ->
+          entries =
+            Enum.map(promoted, fn {name, arity} ->
+              ["  ", Atom.to_string(name), "/", Integer.to_string(arity), "\n"]
+            end)
+
+          [
+            "\n# promoted to public in ",
+            result.target_module,
+            " (was private; marked @doc false)\n",
+            entries
+          ]
+      end
+
     IO.iodata_to_binary([
       "# new file: ",
       result.target_path,
@@ -466,6 +489,7 @@ defmodule Adze.Formatter do
         d -> d
       end,
       caller_block,
+      promoted_block,
       dropped_block
     ])
   end

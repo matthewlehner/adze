@@ -451,6 +451,116 @@ defmodule AdzeExtractTest do
       mods
     end
 
+    test "extracting a defp target with a surviving in-module caller promotes it and rewrites the call" do
+      source = """
+      defmodule PrivateTarget do
+        @moduledoc false
+
+        def run(x), do: helper(x, 1)
+        defp helper(a, b), do: {a, b}
+      end
+      """
+
+      {:ok, result} =
+        Extract.extract(source,
+          definition: "helper/2",
+          module: "PrivateTarget.Helper",
+          path: "/tmp/__nonexistent__.ex"
+        )
+
+      # The extracted def must become public in the target module — a
+      # `defp` there is unreachable from PrivateTarget.
+      assert result.target_content =~ ~r/^\s*def helper\(a, b\)/m
+      refute result.target_content =~ ~r/defp helper/
+      # Public for structural reasons, not as API — flagged as such.
+      assert result.target_content =~ ~r/@doc false\n\s*def helper/
+      assert result.promoted == [{:helper, 2}]
+
+      # The surviving caller must be qualified against the new module.
+      assert result.new_source =~ ~r/alias PrivateTarget\.Helper/
+      assert result.new_source =~ ~r/Helper\.helper\(x, 1\)/
+      refute result.new_source =~ ~r/do: helper\(x, 1\)/
+
+      # Prove it end to end: both modules compile and the call works.
+      mods = compile_and_cleanup([result.target_content, result.new_source])
+      assert PrivateTarget in mods
+      assert PrivateTarget.Helper in mods
+      assert apply(PrivateTarget, :run, [:a]) == {:a, 1}
+    end
+
+    test "promotion flips every clause of a multi-clause defp and respects an existing @doc" do
+      source = """
+      defmodule MultiClause do
+        def run(x), do: helper(x)
+
+        @doc false
+        # first clause
+        defp helper(nil), do: :none
+        defp helper(x) when is_integer(x), do: {:int, x}
+        defp helper(x), do: {:other, x}
+      end
+      """
+
+      {:ok, result} =
+        Extract.extract(source,
+          definition: "helper/1",
+          module: "MultiClause.Helper",
+          path: "/tmp/__nonexistent__.ex"
+        )
+
+      refute result.target_content =~ ~r/defp/
+      assert length(Regex.scan(~r/^\s*def helper\(/m, result.target_content)) == 3
+      # Author's @doc is kept, not duplicated.
+      assert length(Regex.scan(~r/@doc false/, result.target_content)) == 1
+      assert result.target_content =~ "# first clause"
+      assert result.promoted == [{:helper, 1}]
+
+      mods = compile_and_cleanup([result.target_content, result.new_source])
+      assert MultiClause in mods
+      assert apply(MultiClause, :run, [3]) == {:int, 3}
+      assert apply(MultiClause, :run, [nil]) == :none
+    end
+
+    test "promotes defmacrop → defmacro" do
+      source = """
+      defmodule MacroSource do
+        def run, do: twice(2)
+        defmacrop twice(x), do: quote(do: unquote(x) * 2)
+      end
+      """
+
+      {:ok, result} =
+        Extract.extract(source,
+          definition: "twice/1",
+          module: "MacroSource.Macros",
+          path: "/tmp/__nonexistent__.ex"
+        )
+
+      assert result.target_content =~ ~r/^\s*defmacro twice\(x\)/m
+      refute result.target_content =~ "defmacrop"
+      assert result.new_source =~ ~r/Macros\.twice\(2\)/
+      assert result.promoted == [{:twice, 1}]
+    end
+
+    test "a public target is not reported as promoted and gets no @doc false" do
+      source = """
+      defmodule AlreadyPublic do
+        def run(x), do: target(x)
+        def target(x), do: x
+      end
+      """
+
+      {:ok, result} =
+        Extract.extract(source,
+          definition: "target/1",
+          module: "AlreadyPublic.Target",
+          path: "/tmp/__nonexistent__.ex"
+        )
+
+      assert result.promoted == []
+      refute result.target_content =~ "@doc false"
+    end
+
     test "rewrites bare call sites in surviving callers and compiles" do
       source = """
       defmodule HasCaller do

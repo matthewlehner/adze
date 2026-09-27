@@ -61,6 +61,15 @@ defmodule Adze.Extract do
       External callers of the moved public def will need updating — the
       next compile run surfaces them. `find-callers` (Session 7) will
       make this proactive.
+    * **Private targets are promoted.** Extracting a `defp` (or
+      `defmacrop` / `defguardp`) target moves it across a module
+      boundary, so it *must* become public for its surviving callers
+      in the source module to reach it. The tool flips the kind
+      (`defp` → `def`, etc.) and prepends `@doc false` (unless the def
+      already has a `@doc`) to record that it's public for structural
+      reasons rather than as API. Closure helpers stay private — by
+      construction all their callers move with them. Promotions are
+      reported in `promoted` as `[{name, arity}]`.
 
   ## `extract!` writes both files
 
@@ -107,7 +116,8 @@ defmodule Adze.Extract do
           source_module: String.t(),
           public_closure_keys: [{atom(), non_neg_integer()}],
           caller_diffs: %{Path.t() => String.t()},
-          dropped_directives: [dropped_directive()]
+          dropped_directives: [dropped_directive()],
+          promoted: [{atom(), non_neg_integer()}]
         }
 
   @spec extract(String.t(), opts()) :: {:ok, result()} | {:error, term()}
@@ -130,6 +140,13 @@ defmodule Adze.Extract do
       type_index = Types.index(body_info.body_nodes)
       formatter_opts = Keyword.get(opts, :formatter_opts, [])
 
+      # The target def is the new module's entry point. If it was
+      # private it has to become public; flip the AST kind here so the
+      # AST-render path picks it up, and record the key so the
+      # slice-render path and the caller-rewrite pass do too.
+      {closure_defs, promoted} = promote_target(closure_defs, def_key)
+      promoted_keys = MapSet.new(promoted)
+
       source_remaining_keys =
         all_defs
         |> Enum.filter(&(&1.module == source_module))
@@ -146,6 +163,7 @@ defmodule Adze.Extract do
             type_index,
             source_module,
             source_remaining_keys,
+            promoted_keys,
             formatter_opts
           )
 
@@ -164,6 +182,10 @@ defmodule Adze.Extract do
             formatter_opts
           )
 
+        # Keys whose call sites may need rewriting. Promoted defs are
+        # public *now* (in the target) but had no cross-file callers
+        # (they were private) — harmless to include in the project-wide
+        # rename, and required for the in-file rewrite below.
         public_closure_keys =
           closure_defs
           |> Enum.filter(&(&1.visibility == :public))
@@ -179,7 +201,8 @@ defmodule Adze.Extract do
            source_module: source_module,
            public_closure_keys: public_closure_keys,
            caller_diffs: %{},
-           dropped_directives: dropped_directives
+           dropped_directives: dropped_directives,
+           promoted: promoted
          }}
       catch
         {:typep_referenced, info} -> {:error, {:typep_referenced, info}}
@@ -283,15 +306,106 @@ defmodule Adze.Extract do
     {:ok,
      Enum.reduce(single.public_closure_keys, rewrite, fn {name, arity}, rw ->
        {:ok, rw} =
-         ProjectRewrite.rename_function(rw, {source_mod, name}, {target_mod, name},
-           arity: arity
-         )
+         ProjectRewrite.rename_function(rw, {source_mod, name}, {target_mod, name}, arity: arity)
 
        rw
      end)}
   end
 
   defp string_to_module(str) when is_binary(str), do: Module.concat(String.split(str, "."))
+
+  # --- private-target promotion -------------------------------------------
+
+  @promotions %{defp: :def, defmacrop: :defmacro, defguardp: :defguard}
+
+  # Flip the target definition to its public kind when it's private.
+  # Returns the updated closure list and the list of promoted keys
+  # (empty or a single element — only the target can be promoted).
+  defp promote_target(closure_defs, {name, arity}) do
+    Enum.map_reduce(closure_defs, [], fn
+      %Definition{name: ^name, arity: ^arity, visibility: :private, kind: kind} = d, acc
+      when is_map_key(@promotions, kind) ->
+        new_kind = Map.fetch!(@promotions, kind)
+
+        nodes =
+          Enum.map(d.nodes, fn
+            {^kind, m, args} -> {new_kind, m, args}
+            other -> other
+          end)
+
+        clauses =
+          Enum.map(d.parts.clauses, fn
+            {^kind, m, args} -> {new_kind, m, args}
+            other -> other
+          end)
+
+        promoted = %{
+          d
+          | kind: new_kind,
+            visibility: :public,
+            nodes: nodes,
+            parts: %{d.parts | clauses: clauses}
+        }
+
+        {promoted, [{name, arity} | acc]}
+
+      d, acc ->
+        {d, acc}
+    end)
+  end
+
+  # The slice-render path copies source text verbatim, so the private
+  # keyword survives there. Flip it on exactly the clause start lines
+  # (mirrors Adze.ExtractPrivate.flip_clauses/3 in the other direction)
+  # rather than regexing the whole block — a `defp` inside a `quote`
+  # body must be left alone.
+  defp flip_private_keyword_in_text(text, %Definition{} = d) do
+    first_line = Keyword.fetch!(d.range.start, :line)
+
+    clause_offsets =
+      d.parts.clauses
+      |> Enum.map(fn clause ->
+        case Sourceror.get_range(clause) do
+          %{start: s} -> Keyword.get(s, :line) - first_line
+          _ -> nil
+        end
+      end)
+      |> Enum.reject(&is_nil/1)
+      |> MapSet.new()
+
+    pattern = ~r/^(\s*)(defp|defmacrop|defguardp)(\s)/
+
+    text
+    |> String.split("\n")
+    |> Enum.with_index()
+    |> Enum.map(fn {line, idx} ->
+      if MapSet.member?(clause_offsets, idx) do
+        Regex.replace(pattern, line, fn _, indent, kw, ws ->
+          indent <> Atom.to_string(Map.fetch!(@promotions, String.to_atom(kw))) <> ws
+        end)
+      else
+        line
+      end
+    end)
+    |> Enum.join("\n")
+  end
+
+  # `@doc false` marks the promoted def as public-for-structure, not
+  # API. Skip when the author already wrote a `@doc` (true, false, or
+  # a docstring) — theirs wins.
+  defp prepend_doc_false(text, %Definition{parts: %{attributes: attrs}}) do
+    if Enum.any?(attrs, fn {attr_name, _} -> attr_name == :doc end) do
+      text
+    else
+      indent =
+        case Regex.run(~r/^(\s*)\S/, text) do
+          [_, i] -> i
+          _ -> ""
+        end
+
+      indent <> "@doc false\n" <> text
+    end
+  end
 
   # The diffs map from ProjectRewrite.result/1 keys every changed file —
   # including the source (its in-file edit is already in source_diff)
@@ -641,6 +755,7 @@ defmodule Adze.Extract do
          type_index,
          source_module,
          source_remaining_keys,
+         promoted_keys,
          formatter_opts
        ) do
     source_lines = String.split(source, "\n")
@@ -652,7 +767,16 @@ defmodule Adze.Extract do
 
     closure_blocks =
       Enum.map(closure_defs, fn d ->
-        render_closure_def(d, source_lines, type_index, source_module, source_remaining_keys)
+        rendered =
+          render_closure_def(d, source_lines, type_index, source_module, source_remaining_keys)
+
+        if MapSet.member?(promoted_keys, {d.name, d.arity}) do
+          rendered
+          |> flip_private_keyword_in_text(d)
+          |> prepend_doc_false(d)
+        else
+          rendered
+        end
       end)
 
     # Join directives with a single \n so the formatter keeps them as one
@@ -847,6 +971,9 @@ defmodule Adze.Extract do
     lines = String.split(source, "\n")
     closure_keys = MapSet.new(closure_defs, &{&1.name, &1.arity})
 
+    # Promoted defs already carry `visibility: :public` at this point
+    # (see promote_target/2), so they're picked up here and their
+    # surviving in-module callers get qualified against the target.
     rewrite_keys =
       closure_defs
       |> Enum.filter(&(&1.visibility == :public))
