@@ -208,6 +208,27 @@ defmodule Adze.FindCallersTest do
       [_c] = result_files["lib/x.ex"]
     end
 
+    test "resolves aliases within each sibling module's scope" do
+      files = %{
+        "lib/siblings.ex" => """
+        defmodule First do
+          alias MyApp.Foo, as: Target
+          def go, do: Target.bar()
+        end
+
+        defmodule Second do
+          alias MyApp.Other, as: Target
+          def go, do: Target.bar()
+        end
+        """
+      }
+
+      {:ok, result} = FindCallers.find_callers("MyApp.Foo.bar/0", files: files)
+
+      assert result.total == 1
+      assert [%{line: 3, in_module: "First"}] = result.files["lib/siblings.ex"]
+    end
+
     test "no alias — only fully-qualified refs match" do
       files = %{
         "lib/x.ex" => """

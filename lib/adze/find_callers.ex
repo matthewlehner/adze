@@ -146,48 +146,18 @@ defmodule Adze.FindCallers do
   defp scan_source(content, target) do
     case Sourceror.parse_string(content) do
       {:ok, ast} ->
-        aliases = build_alias_table(ast)
         lines = String.split(content, "\n")
 
         ast
         |> expand_pipes()
-        |> walk_for_target(aliases, target, lines)
+        |> walk_for_target(target, lines)
 
       _ ->
         []
     end
   end
 
-  # --- per-file alias resolution -----------------------------------------
-
-  # Tracks the enclosing `defmodule` scope while walking so that
-  # `alias __MODULE__.Inner` can be resolved against the module it
-  # actually appears in (mirrors the scope tracking `walk_for_target`
-  # already does for refs).
-  defp build_alias_table(ast) do
-    {_, %{table: table}} =
-      Macro.traverse(
-        ast,
-        %{table: %{}, scope: []},
-        fn
-          {:defmodule, _, [alias_ast, _]} = node, acc ->
-            name = qualify_scope(acc.scope, alias_name(alias_ast))
-            {node, %{acc | scope: [name | acc.scope]}}
-
-          {:alias, _, args} = node, acc ->
-            {node, %{acc | table: register_alias(acc.table, args, acc.scope)}}
-
-          node, acc ->
-            {node, acc}
-        end,
-        fn
-          {:defmodule, _, _} = node, acc -> {node, %{acc | scope: tl(acc.scope)}}
-          node, acc -> {node, acc}
-        end
-      )
-
-    table
-  end
+  # --- alias resolution --------------------------------------------------
 
   # alias Foo.Bar (skipped when parts contain non-atom AST nodes we
   # can't statically resolve — `__MODULE__`-prefixed parts are
@@ -300,21 +270,23 @@ defmodule Adze.FindCallers do
 
   # --- main walk ---------------------------------------------------------
 
-  # `Macro.traverse/4` (pre + post) so we can track the enclosing
-  # `defmodule` scope as we descend, then pop it on the way back up.
-  # Each ref gets the innermost-enclosing module name as `in_module`,
-  # which downstream consumers (e.g. `extract-private`) use to decide
-  # whether a same-file ref is internal or external. `nil` when the
-  # ref sits at file top level (scripts, .exs without defmodule).
-  defp walk_for_target(ast, aliases, target, lines) do
+  # Walk aliases and refs together so each call sees only the aliases in
+  # effect at its position. A nested module inherits its parent's aliases,
+  # but changes inside it must not leak into sibling modules.
+  defp walk_for_target(ast, target, lines) do
     {_, %{refs: refs}} =
       Macro.traverse(
         ast,
-        %{refs: [], scope: []},
+        %{refs: [], scope: [], aliases: %{}, alias_stack: []},
         fn
           {:defmodule, _, [alias_ast, _]} = node, acc ->
             name = qualify_scope(acc.scope, alias_name(alias_ast))
-            {node, %{acc | scope: [name | acc.scope]}}
+
+            {node,
+             %{acc | scope: [name | acc.scope], alias_stack: [acc.aliases | acc.alias_stack]}}
+
+          {:alias, _, args} = node, acc ->
+            {node, %{acc | aliases: register_alias(acc.aliases, args, acc.scope)}}
 
           # &Mod.fun/arity (qualified capture)
           {:&, _,
@@ -329,7 +301,7 @@ defmodule Adze.FindCallers do
           when is_atom(fun) ->
             arity = unwrap_int(arity_ast)
 
-            if match_call(parts, fun, arity, aliases, target, acc.scope) do
+            if match_call(parts, fun, arity, acc.aliases, target, acc.scope) do
               {node, push_ref(acc, node, :capture, arity, lines)}
             else
               {node, acc}
@@ -340,7 +312,7 @@ defmodule Adze.FindCallers do
           when is_atom(fun) and is_list(args) ->
             arity = length(args)
 
-            if match_call(parts, fun, arity, aliases, target, acc.scope) do
+            if match_call(parts, fun, arity, acc.aliases, target, acc.scope) do
               {node, push_ref(acc, node, :call, arity, lines)}
             else
               {node, acc}
@@ -350,8 +322,17 @@ defmodule Adze.FindCallers do
             {node, acc}
         end,
         fn
-          {:defmodule, _, _} = node, acc -> {node, %{acc | scope: tl(acc.scope)}}
-          node, acc -> {node, acc}
+          {:defmodule, _, _} = node, acc ->
+            {node,
+             %{
+               acc
+               | scope: tl(acc.scope),
+                 aliases: hd(acc.alias_stack),
+                 alias_stack: tl(acc.alias_stack)
+             }}
+
+          node, acc ->
+            {node, acc}
         end
       )
 
@@ -406,8 +387,11 @@ defmodule Adze.FindCallers do
   # legal) still can't be resolved statically, so we return `nil`.
   defp normalize_parts([{:__MODULE__, _, ctx} | rest], scope) when is_atom(ctx) do
     case scope do
-      [] -> nil
-      [current | _] -> String.split(current, ".") |> Enum.map(&String.to_atom/1) |> Kernel.++(rest)
+      [] ->
+        nil
+
+      [current | _] ->
+        String.split(current, ".") |> Enum.map(&String.to_atom/1) |> Kernel.++(rest)
     end
   end
 
