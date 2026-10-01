@@ -200,6 +200,36 @@ defmodule Adze.ExtractPrivateTest do
       assert ref.path == "lib/caller.ex"
     end
 
+    test "external caller in a sibling module is not hidden by a later alias with the same name" do
+      source = """
+      defmodule MyApp.Foo do
+        def helper, do: :ok
+      end
+      """
+
+      caller = """
+      defmodule First do
+        alias MyApp.Foo, as: Target
+        def go, do: Target.helper()
+      end
+
+      defmodule Second do
+        alias MyApp.Other, as: Target
+        def go, do: Target.helper()
+      end
+      """
+
+      assert {:error, {:external_callers, [ref]}} =
+               ExtractPrivate.extract_private(source,
+                 definition: "helper/0",
+                 path: "lib/foo.ex",
+                 files: %{"lib/foo.ex" => source, "lib/caller.ex" => caller}
+               )
+
+      assert ref.path == "lib/caller.ex"
+      assert ref.in_module == "First"
+    end
+
     test "sibling module in the same file blocks the flip" do
       source = """
       defmodule MyApp.Foo do
