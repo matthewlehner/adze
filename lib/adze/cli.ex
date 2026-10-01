@@ -200,6 +200,12 @@ defmodule Adze.CLI do
       {:error, {:external_callers, refs}} ->
         die(format_externals_error(refs))
 
+      {:error, {:unsupported_module, module}} ->
+        die(
+          "cannot check callers of a definition in module #{inspect(module)}: " <>
+            "only Foo.Bar-style module names can be searched"
+        )
+
       {:error, {:ambiguous_attribute, _} = err} ->
         die("ambiguous attribute attachment: #{inspect(err)}")
 

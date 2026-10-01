@@ -288,6 +288,20 @@ defmodule Adze.ExtractPrivateTest do
       end
     end
 
+    test "modules find-callers can't search are refused, not reported as caller-free" do
+      for {source, module} <- [
+            {"defmodule :my_erl_mod do\n  def helper, do: :ok\nend\n", "?"},
+            {"defmodule Module.concat([:a]) do\n  def helper, do: :ok\nend\n", "?"}
+          ] do
+        assert {:error, {:unsupported_module, ^module}} =
+                 ExtractPrivate.extract_private(source,
+                   definition: "helper/0",
+                   path: "lib/m.ex",
+                   files: %{"lib/m.ex" => source}
+                 )
+      end
+    end
+
     test "definition not found" do
       source = """
       defmodule X do

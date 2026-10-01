@@ -31,6 +31,10 @@ defmodule Adze.ExtractPrivate do
   refs, then re-parse each affected file to determine each ref's
   enclosing module for classification.
 
+  Definitions in modules `find-callers` can't search for (an atom like
+  `defmodule :erlang_style`, or a dynamically built name) are refused
+  with `{:error, {:unsupported_module, module}}`.
+
   Limitations inherited from `find-callers`: unqualified calls via
   `import` aren't detected, nor dynamic `apply/3`, nor string-literal
   mentions. If the codebase uses these against the target, this op
@@ -103,6 +107,7 @@ defmodule Adze.ExtractPrivate do
          {:ok, definition} <- find_definition(source, def_spec, opts),
          {:ok, to_kind} <- flip_kind(definition.kind),
          :ok <- ensure_public(definition),
+         :ok <- ensure_searchable_module(definition),
          {:ok, fc_result} <- run_find_callers(definition, opts),
          {:ok, externals} <- classify_external(fc_result, path, definition),
          :ok <- check_no_externals(externals) do
@@ -189,6 +194,15 @@ defmodule Adze.ExtractPrivate do
 
   defp ensure_public(%Definition{visibility: :private, kind: kind, name: n, arity: a}),
     do: {:error, {:already_private, %{kind: kind, definition: {n, a}}}}
+
+  # `find-callers` can only search for a `Foo.Bar` module. Anything else
+  # (`defmodule :erlang_style`, a dynamic name recorded as "?") can't be
+  # searched, so refuse the flip rather than claim there are no callers.
+  defp ensure_searchable_module(%Definition{module: module}) do
+    if Adze.Names.valid_module_name?(module),
+      do: :ok,
+      else: {:error, {:unsupported_module, module}}
+  end
 
   defp flip_kind(:def), do: {:ok, :defp}
   defp flip_kind(:defmacro), do: {:ok, :defmacrop}
