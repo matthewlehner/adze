@@ -165,6 +165,10 @@ defmodule Adze.Formatter do
     [m, ".", Atom.to_string(f), "/*"]
   end
 
+  defp format_target(%{module: m, function: f, arity: a}) when is_list(a) do
+    [m, ".", Atom.to_string(f), "/", a |> Enum.map(&Integer.to_string/1) |> Enum.join(",")]
+  end
+
   defp format_target(%{module: m, function: f, arity: a}) do
     [m, ".", Atom.to_string(f), "/", Integer.to_string(a)]
   end

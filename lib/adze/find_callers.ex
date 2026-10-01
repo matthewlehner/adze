@@ -33,7 +33,7 @@ defmodule Adze.FindCallers do
   ## Output shape
 
       %{
-        target: %{module: "MyApp.Foo", function: :bar, arity: 2 | :any},
+        target: %{module: "MyApp.Foo", function: :bar, arity: 2 | [1, 2] | :any},
         total: 3,
         files: %{
           "lib/x.ex" => [
@@ -64,12 +64,12 @@ defmodule Adze.FindCallers do
   @type target_spec ::
           String.t()
           | {module(), atom()}
-          | {module(), atom(), non_neg_integer() | :any}
+          | {module(), atom(), non_neg_integer() | [non_neg_integer()] | :any}
 
   @type target :: %{
           module: String.t(),
           function: atom(),
-          arity: non_neg_integer() | :any
+          arity: non_neg_integer() | [non_neg_integer()] | :any
         }
 
   @type caller :: %{
@@ -103,14 +103,26 @@ defmodule Adze.FindCallers do
     {:ok, %{module: inspect(mod), function: fun, arity: arity}}
   end
 
+  # A list of arities, e.g. every arity a definition with default
+  # arguments is callable at.
+  defp parse_target({mod, fun, [_ | _] = arities} = spec)
+       when is_atom(mod) and is_atom(fun) do
+    if Enum.all?(arities, &(is_integer(&1) and &1 >= 0)),
+      do: {:ok, %{module: inspect(mod), function: fun, arity: Enum.sort(Enum.uniq(arities))}},
+      else: {:error, {:bad_target, spec}}
+  end
+
   defp parse_target({mod, fun}) when is_atom(mod) and is_atom(fun) do
     {:ok, %{module: inspect(mod), function: fun, arity: :any}}
   end
 
   defp parse_target(str) when is_binary(str) do
-    case Regex.run(~r/^([A-Z][A-Za-z0-9_.]*)\.([a-z_!?][A-Za-z0-9_!?]*)(?:\/(\d+))?$/, str) do
+    case Regex.run(
+           ~r/^([A-Z][A-Za-z0-9_.]*)\.([a-z_!?][A-Za-z0-9_!?]*)(?:\/(\d+(?:,\d+)*))?$/,
+           str
+         ) do
       [_, mod, fun, arity] ->
-        {:ok, %{module: mod, function: String.to_atom(fun), arity: String.to_integer(arity)}}
+        {:ok, %{module: mod, function: String.to_atom(fun), arity: parse_arity_str(arity)}}
 
       [_, mod, fun] ->
         {:ok, %{module: mod, function: String.to_atom(fun), arity: :any}}
@@ -121,6 +133,18 @@ defmodule Adze.FindCallers do
   end
 
   defp parse_target(other), do: {:error, {:bad_target, other}}
+
+  # "2" -> 2; "1,2" -> [1, 2]
+  defp parse_arity_str(str) do
+    case str
+         |> String.split(",")
+         |> Enum.map(&String.to_integer/1)
+         |> Enum.uniq()
+         |> Enum.sort() do
+      [single] -> single
+      many -> many
+    end
+  end
 
   # --- file enumeration --------------------------------------------------
 
@@ -361,6 +385,10 @@ defmodule Adze.FindCallers do
   defp alias_name(atom) when is_atom(atom), do: inspect(atom)
   defp alias_name(_), do: "?"
 
+  defp arity_matches?(:any, _), do: true
+  defp arity_matches?(wanted, arity) when is_list(wanted), do: arity in wanted
+  defp arity_matches?(wanted, arity), do: arity == wanted
+
   defp match_call(parts, fun, arity, aliases, target, scope) do
     case normalize_parts(parts, scope) do
       nil ->
@@ -374,7 +402,7 @@ defmodule Adze.FindCallers do
           resolved ->
             resolved == target.module and
               fun == target.function and
-              (target.arity == :any or arity == target.arity)
+              arity_matches?(target.arity, arity)
         end
     end
   end

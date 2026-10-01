@@ -101,6 +101,34 @@ defmodule Adze.FindCallersTest do
     end
   end
 
+  describe "find_callers/2 — arity lists" do
+    test "matches any arity in the list and reports it on the target" do
+      files = %{
+        "lib/caller.ex" => """
+        defmodule MyApp.Caller do
+          def go do
+            MyApp.Foo.bar(1)
+            MyApp.Foo.bar(1, 2)
+            MyApp.Foo.bar(1, 2, 3)
+          end
+        end
+        """
+      }
+
+      {:ok, %{target: target, total: total, files: result_files}} =
+        FindCallers.find_callers({MyApp.Foo, :bar, [2, 1, 1]}, files: files)
+
+      assert target.arity == [1, 2]
+      assert total == 2
+      assert result_files["lib/caller.ex"] |> Enum.map(& &1.arity) |> Enum.sort() == [1, 2]
+    end
+
+    test "rejects malformed arity lists" do
+      assert {:error, {:bad_target, _}} =
+               FindCallers.find_callers({MyApp.Foo, :bar, [1, :x]}, files: %{})
+    end
+  end
+
   describe "find_callers/2 — pipes" do
     test "x |> Mod.fun(args) records arity + 1" do
       files = %{
@@ -405,6 +433,20 @@ defmodule Adze.FindCallersTest do
                FindCallers.find_callers("not a target", files: %{})
     end
 
+    test "string target accepts a comma-separated arity list" do
+      assert {:ok, %{target: %{arity: [1, 2]}}} =
+               FindCallers.find_callers("MyApp.Foo.bar/2,1", files: %{})
+
+      assert {:ok, %{target: %{arity: 2}}} =
+               FindCallers.find_callers("MyApp.Foo.bar/2,2", files: %{})
+    end
+
+    test "rejects malformed string arity lists" do
+      for bad <- ["MyApp.Foo.bar/1,", "MyApp.Foo.bar/,1", "MyApp.Foo.bar/1,x"] do
+        assert {:error, {:bad_target, ^bad}} = FindCallers.find_callers(bad, files: %{})
+      end
+    end
+
     test "rejects lowercase module head" do
       assert {:error, {:bad_target, _}} =
                FindCallers.find_callers("foo.bar", files: %{})
@@ -412,6 +454,12 @@ defmodule Adze.FindCallersTest do
   end
 
   describe "Formatter.format_find_callers/2" do
+    test "text output renders an arity-list target as Mod.fun/1,2" do
+      {:ok, result} = FindCallers.find_callers({MyApp.Foo, :bar, [1, 2]}, files: %{})
+      text = Adze.Formatter.format_find_callers(result, :text)
+      assert IO.iodata_to_binary(text) =~ "MyApp.Foo.bar/1,2"
+    end
+
     setup do
       files = %{
         "lib/a.ex" => """
