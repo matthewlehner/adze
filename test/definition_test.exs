@@ -97,7 +97,7 @@ defmodule AdzeDefinitionTest do
       assert {:ok, {"/", 2}} = Definition.parse_definition_spec("//2")
       assert {:ok, {"+", 2}} = Definition.parse_definition_spec("+/2")
 
-      for bad <- ["foo", "foo/", "/2x", "foo/-1", 42] do
+      for bad <- ["foo", "foo/", "/2x", "foo/-1", "/2", 42, {:foo, -1}] do
         assert {:error, {:bad_definition_spec, ^bad}} = Definition.parse_definition_spec(bad)
       end
     end

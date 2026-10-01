@@ -236,7 +236,7 @@ defmodule AdzeExtractTest do
     test "errors when the definition isn't found" do
       source = "defmodule S do\n  def f, do: :ok\nend\n"
 
-      assert {:error, {:not_found, {:missing, 0}}} =
+      assert {:error, {:not_found, {"missing", 0}}} =
                Extract.extract(source,
                  definition: "missing/0",
                  module: "X",

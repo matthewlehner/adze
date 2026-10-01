@@ -190,11 +190,12 @@ defmodule Adze.Definition do
   @spec parse_definition_spec(term()) ::
           {:ok, {atom() | String.t(), non_neg_integer()}}
           | {:error, {:bad_definition_spec, term()}}
-  def parse_definition_spec({name, arity}) when is_atom(name) and is_integer(arity),
-    do: {:ok, {name, arity}}
+  def parse_definition_spec({name, arity})
+      when is_atom(name) and is_integer(arity) and arity >= 0,
+      do: {:ok, {name, arity}}
 
   def parse_definition_spec(spec) when is_binary(spec) do
-    # Split on the *last* slash so operator names like `//2` or `/2` work.
+    # Split on the *last* slash so operator names like `//2` (the `/` operator) work.
     case Regex.run(~r{\A(.+)/(\d+)\z}s, spec) do
       [_, name, arity] -> {:ok, {name, String.to_integer(arity)}}
       _ -> {:error, {:bad_definition_spec, spec}}
@@ -217,10 +218,9 @@ defmodule Adze.Definition do
   Resolve a parsed `{name, arity}` against already-parsed definitions,
   returning the key with the definition's own atom name.
 
-  Never creates atoms. If no definition has that name the name is left
-  as the existing atom (if the VM happens to know one, which keeps
-  error terms stable) or the original string; either way it matches
-  nothing in `defs`.
+  Never creates atoms. If no definition has that name, the name stays a
+  string, which matches nothing in `defs` and keeps error terms
+  predictable (`{:not_found, {"name", arity}}`).
   """
   @spec resolve_key({atom() | String.t(), non_neg_integer()}, [%{name: atom()}]) ::
           {atom() | String.t(), non_neg_integer()}
@@ -229,7 +229,7 @@ defmodule Adze.Definition do
   def resolve_key({name, arity}, defs) when is_binary(name) do
     case Enum.find(defs, &(Atom.to_string(&1.name) == name)) do
       %{name: atom} -> {atom, arity}
-      nil -> {Adze.Names.existing_atom_or_string(name), arity}
+      nil -> {name, arity}
     end
   end
 
