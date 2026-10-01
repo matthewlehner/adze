@@ -23,39 +23,43 @@ defmodule Adze.LsDeps do
 
   alias Adze.Deps
 
-  @type definition :: {atom(), non_neg_integer()}
+  @type definition :: {atom(), non_neg_integer()} | String.t()
 
   # --- file/source entry points ------------------------------------------
 
   @spec ls_deps_file(Path.t(), definition()) :: {:ok, map()} | {:error, term()}
   def ls_deps_file(path, definition),
-    do: with_deps_file(path, &ls_deps_from(&1, definition))
+    do: with_deps_file(path, definition, &ls_deps_from/2)
 
   @spec ls_deps(String.t(), definition(), keyword()) :: {:ok, map()} | {:error, term()}
   def ls_deps(source, definition, opts \\ []) do
-    with_deps_source(source, opts, &ls_deps_from(&1, definition))
+    with_deps_source(source, opts, definition, &ls_deps_from/2)
   end
 
   @spec ls_extract_file(Path.t(), definition()) :: {:ok, map()} | {:error, term()}
   def ls_extract_file(path, definition),
-    do: with_deps_file(path, &ls_extract_from(&1, definition))
+    do: with_deps_file(path, definition, &ls_extract_from/2)
 
   @spec ls_extract(String.t(), definition(), keyword()) :: {:ok, map()} | {:error, term()}
   def ls_extract(source, definition, opts \\ []) do
-    with_deps_source(source, opts, &ls_extract_from(&1, definition))
+    with_deps_source(source, opts, definition, &ls_extract_from/2)
   end
 
-  defp with_deps_file(path, fun) do
-    case Deps.deps_file(path) do
-      {:ok, deps} -> {:ok, fun.(deps)}
-      err -> err
-    end
+  defp with_deps_file(path, spec, fun) do
+    with {:ok, deps} <- Deps.deps_file(path), do: apply_spec(deps, spec, fun)
   end
 
-  defp with_deps_source(source, opts, fun) do
-    case Deps.deps(source, opts) do
-      {:ok, deps} -> {:ok, fun.(deps)}
-      err -> err
+  defp with_deps_source(source, opts, spec, fun) do
+    with {:ok, deps} <- Deps.deps(source, opts), do: apply_spec(deps, spec, fun)
+  end
+
+  # `spec` is `{name, arity}` or a `"name/arity"` string; strings are
+  # resolved against the parsed definitions so no atom is created.
+  defp apply_spec(deps, spec, fun) do
+    defs = Enum.flat_map(deps.modules, & &1.defs)
+
+    with {:ok, key} <- Adze.Definition.resolve_spec(spec, defs) do
+      {:ok, fun.(deps, key)}
     end
   end
 

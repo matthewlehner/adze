@@ -302,4 +302,18 @@ defmodule AdzeLsDepsTest do
       assert {:error, {:file_read, _}} = LsDeps.ls_deps_file("/no/such.ex", {:x, 0})
     end
   end
+
+  describe "string definition specs" do
+    test "resolve against the parsed definitions, creating no atoms" do
+      src = "defmodule M do\n  def go, do: helper()\n  defp helper, do: :ok\nend\n"
+
+      assert {:ok, %{modules: [%{root: %{name: :go}}]}} = LsDeps.ls_deps(src, "go/0")
+      assert {:ok, %{modules: [_]}} = LsDeps.ls_extract(src, "go/0")
+      assert {:error, {:bad_definition_spec, "go"}} = LsDeps.ls_deps(src, "go")
+
+      name = "never_seen_#{System.unique_integer([:positive])}_fn"
+      assert {:ok, %{modules: []}} = LsDeps.ls_deps(src, "#{name}/0")
+      assert_raise ArgumentError, fn -> String.to_existing_atom(name) end
+    end
+  end
 end

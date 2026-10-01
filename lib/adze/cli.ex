@@ -19,6 +19,7 @@ defmodule Adze.CLI do
     Deps,
     LsDeps,
     Aliases,
+    Definition,
     Move,
     Extract,
     ExtractPrivate,
@@ -455,7 +456,10 @@ defmodule Adze.CLI do
 
   defp filter_definition(deps, nil), do: deps
 
-  defp filter_definition(deps, {name, arity}) do
+  defp filter_definition(deps, spec) do
+    {:ok, {name, arity}} =
+      Definition.resolve_spec(spec, Enum.flat_map(deps.modules, & &1.defs))
+
     modules =
       deps.modules
       |> Enum.map(fn m ->
@@ -522,16 +526,12 @@ defmodule Adze.CLI do
 
   defp parse_definition(nil, _label), do: {:ok, nil}
 
+  # Validate only; the raw string is passed to the library, which resolves
+  # the name against the parsed source instead of creating an atom.
   defp parse_definition(str, label) do
-    case String.split(str, "/", parts: 2) do
-      [name, arity_str] ->
-        case Integer.parse(arity_str) do
-          {arity, ""} when arity >= 0 -> {:ok, {String.to_atom(name), arity}}
-          _ -> {:error, "bad #{label} value: #{str} (expected name/arity)"}
-        end
-
-      _ ->
-        {:error, "bad #{label} value: #{str} (expected name/arity)"}
+    case Definition.parse_definition_spec(str) do
+      {:ok, _} -> {:ok, str}
+      {:error, _} -> {:error, "bad #{label} value: #{str} (expected name/arity)"}
     end
   end
 

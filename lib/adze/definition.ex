@@ -204,6 +204,16 @@ defmodule Adze.Definition do
   def parse_definition_spec(spec), do: {:error, {:bad_definition_spec, spec}}
 
   @doc """
+  `parse_definition_spec/1` followed by `resolve_key/2`.
+  """
+  @spec resolve_spec(term(), [%{name: atom()}]) ::
+          {:ok, {atom() | String.t(), non_neg_integer()}}
+          | {:error, {:bad_definition_spec, term()}}
+  def resolve_spec(spec, defs) do
+    with {:ok, parsed} <- parse_definition_spec(spec), do: {:ok, resolve_key(parsed, defs)}
+  end
+
+  @doc """
   Resolve a parsed `{name, arity}` against already-parsed definitions,
   returning the key with the definition's own atom name.
 
@@ -212,13 +222,13 @@ defmodule Adze.Definition do
   error terms stable) or the original string; either way it matches
   nothing in `defs`.
   """
-  @spec resolve_key({atom() | String.t(), non_neg_integer()}, [t()]) ::
+  @spec resolve_key({atom() | String.t(), non_neg_integer()}, [%{name: atom()}]) ::
           {atom() | String.t(), non_neg_integer()}
   def resolve_key({name, arity}, _defs) when is_atom(name), do: {name, arity}
 
   def resolve_key({name, arity}, defs) when is_binary(name) do
     case Enum.find(defs, &(Atom.to_string(&1.name) == name)) do
-      %__MODULE__{name: atom} -> {atom, arity}
+      %{name: atom} -> {atom, arity}
       nil -> {Adze.Names.existing_atom_or_string(name), arity}
     end
   end
