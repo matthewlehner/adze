@@ -148,6 +148,59 @@ defmodule Adze.Definition do
     end
   end
 
+  @doc """
+  Every arity a definition can be called with. A head with `n` default
+  arguments (`\\\\`) also generates the `arity - n .. arity - 1` callables,
+  so callers at those arities refer to the same definition.
+  """
+  @spec callable_arities(t()) :: [non_neg_integer()]
+  def callable_arities(%__MODULE__{arity: arity, parts: %{clauses: clauses}}) do
+    defaults =
+      clauses
+      |> Enum.map(&count_defaults/1)
+      |> Enum.max(fn -> 0 end)
+
+    Enum.to_list((arity - defaults)..arity//1)
+  end
+
+  def callable_arities(%__MODULE__{arity: arity}), do: [arity]
+
+  defp count_defaults({_kind, _, [head | _]}),
+    do: head |> head_args() |> Enum.count(&default_arg?/1)
+
+  defp count_defaults(_), do: 0
+
+  defp head_args({:when, _, [head | _]}), do: head_args(head)
+  defp head_args({name, _, args}) when is_atom(name) and is_list(args), do: args
+  defp head_args(_), do: []
+
+  defp default_arg?({:\\, _, [_, _]}), do: true
+  defp default_arg?(_), do: false
+
+  @doc """
+  Parse a `"name/arity"` string (or `{name, arity}` tuple) into
+  `{:ok, {name, arity}}`, or `{:error, {:bad_definition_spec, spec}}`.
+  """
+  @spec parse_definition_spec(term()) ::
+          {:ok, {atom(), non_neg_integer()}} | {:error, {:bad_definition_spec, term()}}
+  def parse_definition_spec({name, arity}) when is_atom(name) and is_integer(arity),
+    do: {:ok, {name, arity}}
+
+  def parse_definition_spec(spec) when is_binary(spec) do
+    case String.split(spec, "/") do
+      [name, arity_str] when name != "" ->
+        case Integer.parse(arity_str) do
+          {n, ""} when n >= 0 -> {:ok, {String.to_atom(name), n}}
+          _ -> {:error, {:bad_definition_spec, spec}}
+        end
+
+      _ ->
+        {:error, {:bad_definition_spec, spec}}
+    end
+  end
+
+  def parse_definition_spec(spec), do: {:error, {:bad_definition_spec, spec}}
+
   defp effective_allowlist(opts) do
     app_level =
       :adze
@@ -383,21 +436,5 @@ defmodule Adze.Definition do
       attributes: Enum.map(attrs, &attr_info/1),
       intervening: intervening
     }
-  end
-
-  defp parse_definition_spec({name, arity}) when is_atom(name) and is_integer(arity),
-    do: {:ok, {name, arity}}
-
-  defp parse_definition_spec(spec) when is_binary(spec) do
-    case String.split(spec, "/") do
-      [name, arity_str] when name != "" ->
-        case Integer.parse(arity_str) do
-          {n, ""} when n >= 0 -> {:ok, {String.to_atom(name), n}}
-          _ -> {:error, {:bad_definition_spec, spec}}
-        end
-
-      _ ->
-        {:error, {:bad_definition_spec, spec}}
-    end
   end
 end

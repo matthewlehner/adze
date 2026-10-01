@@ -149,10 +149,10 @@ defmodule Adze.ExtractPrivate do
   end
 
   defp find_definition(source, spec, opts) do
-    {name, arity} = parse_spec(spec)
     from_module = Keyword.get(opts, :from_module)
 
-    with {:ok, defs} <- Definition.list(source, opts) do
+    with {:ok, {name, arity}} <- Definition.parse_definition_spec(spec),
+         {:ok, defs} <- Definition.list(source, opts) do
       matches = Enum.filter(defs, &(&1.name == name and &1.arity == arity))
 
       pick_match(matches, name, arity, from_module)
@@ -184,13 +184,6 @@ defmodule Adze.ExtractPrivate do
     end
   end
 
-  defp parse_spec({n, a}) when is_atom(n) and is_integer(a), do: {n, a}
-
-  defp parse_spec(str) when is_binary(str) do
-    [name, arity] = String.split(str, "/", parts: 2)
-    {String.to_atom(name), String.to_integer(arity)}
-  end
-
   defp ensure_public(%Definition{visibility: :public}), do: :ok
 
   defp ensure_public(%Definition{visibility: :private, kind: kind, name: n, arity: a}),
@@ -204,8 +197,10 @@ defmodule Adze.ExtractPrivate do
 
   # --- find-callers + classification -------------------------------------
 
+  # Default arguments make `helper/2` callable as `helper/1` too, and
+  # those callers break just the same, so search every callable arity.
   defp run_find_callers(%Definition{} = d, opts) do
-    target = "#{d.module}.#{d.name}/#{d.arity}"
+    target = {Module.concat([d.module]), d.name, Definition.callable_arities(d)}
 
     fc_opts =
       case Keyword.get(opts, :files) do

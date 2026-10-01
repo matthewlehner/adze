@@ -230,6 +230,30 @@ defmodule Adze.ExtractPrivateTest do
       assert ref.in_module == "First"
     end
 
+    test "external calls to a default-argument arity block the flip" do
+      source = ~S"""
+      defmodule MyApp.Foo do
+        def helper(a, b \\ 1), do: {a, b}
+      end
+      """
+
+      caller = """
+      defmodule MyApp.Caller do
+        def go, do: MyApp.Foo.helper(:value)
+      end
+      """
+
+      assert {:error, {:external_callers, [ref]}} =
+               ExtractPrivate.extract_private(source,
+                 definition: "helper/2",
+                 path: "lib/foo.ex",
+                 files: %{"lib/foo.ex" => source, "lib/caller.ex" => caller}
+               )
+
+      assert ref.arity == 1
+      assert ref.path == "lib/caller.ex"
+    end
+
     test "sibling module in the same file blocks the flip" do
       source = """
       defmodule MyApp.Foo do
@@ -249,6 +273,19 @@ defmodule Adze.ExtractPrivateTest do
                )
 
       assert ref.in_module == "MyApp.Sibling"
+    end
+
+    test "malformed definition specs return errors rather than raising" do
+      source = "defmodule X do\n  def real, do: :ok\nend\n"
+
+      for spec <- ["real", "real/nope"] do
+        assert {:error, {:bad_definition_spec, ^spec}} =
+                 ExtractPrivate.extract_private(source,
+                   definition: spec,
+                   path: "lib/x.ex",
+                   files: %{"lib/x.ex" => source}
+                 )
+      end
     end
 
     test "definition not found" do
