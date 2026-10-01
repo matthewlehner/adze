@@ -52,13 +52,42 @@ defmodule AdzeDefinitionTest do
     end
   end
 
+  describe "atom safety" do
+    test "unknown names in string specs never create atoms" do
+      name = "never_seen_#{System.unique_integer([:positive])}_fn"
+      source = "defmodule M do\n  def real, do: :ok\nend\n"
+
+      assert {:error, :not_found} = Definition.find(source, "#{name}/0")
+      assert_raise ArgumentError, fn -> String.to_existing_atom(name) end
+
+      assert {:error, {:not_found, :definition}} =
+               Adze.ExtractPrivate.extract_private(source,
+                 definition: "#{name}/0",
+                 path: "lib/m.ex",
+                 files: %{"lib/m.ex" => source}
+               )
+
+      assert_raise ArgumentError, fn -> String.to_existing_atom(name) end
+
+      assert {:error, {:not_found, {^name, 0}}} =
+               Adze.Extract.extract(source, definition: "#{name}/0", module: "M.Out")
+
+      assert_raise ArgumentError, fn -> String.to_existing_atom(name) end
+    end
+
+    test "string specs resolve to the definition's own atom" do
+      source = "defmodule M do\n  def real(a), do: a\nend\n"
+      assert {:ok, %{name: :real}} = Definition.find(source, "real/1")
+    end
+  end
+
   describe "parse_definition_spec/1" do
     test "strings, tuples, operators and errors" do
       alias Adze.Definition
-      assert {:ok, {:foo, 2}} = Definition.parse_definition_spec("foo/2")
+      assert {:ok, {"foo", 2}} = Definition.parse_definition_spec("foo/2")
       assert {:ok, {:foo, 2}} = Definition.parse_definition_spec({:foo, 2})
-      assert {:ok, {:/, 2}} = Definition.parse_definition_spec("//2")
-      assert {:ok, {:+, 2}} = Definition.parse_definition_spec("+/2")
+      assert {:ok, {"/", 2}} = Definition.parse_definition_spec("//2")
+      assert {:ok, {"+", 2}} = Definition.parse_definition_spec("+/2")
 
       for bad <- ["foo", "foo/", "/2x", "foo/-1", 42] do
         assert {:error, {:bad_definition_spec, ^bad}} = Definition.parse_definition_spec(bad)

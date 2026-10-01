@@ -139,8 +139,10 @@ defmodule Adze.Definition do
   @spec find(String.t(), definition_spec(), opts()) ::
           {:ok, t()} | {:error, :not_found} | {:error, term()}
   def find(source, spec, opts \\ []) when is_binary(source) do
-    with {:ok, key} <- parse_definition_spec(spec),
+    with {:ok, parsed} <- parse_definition_spec(spec),
          {:ok, defs} <- list(source, opts) do
+      key = resolve_key(parsed, defs)
+
       case Enum.find(defs, fn d -> {d.name, d.arity} == key end) do
         nil -> {:error, :not_found}
         d -> {:ok, d}
@@ -180,21 +182,52 @@ defmodule Adze.Definition do
   @doc """
   Parse a `"name/arity"` string (or `{name, arity}` tuple) into
   `{:ok, {name, arity}}`, or `{:error, {:bad_definition_spec, spec}}`.
+
+  A string spec yields the name as a **string**: user-supplied text is
+  never turned into an atom (atoms are never garbage collected). Use
+  `resolve_key/2` to map the name onto a parsed definition's atom.
   """
   @spec parse_definition_spec(term()) ::
-          {:ok, {atom(), non_neg_integer()}} | {:error, {:bad_definition_spec, term()}}
+          {:ok, {atom() | String.t(), non_neg_integer()}}
+          | {:error, {:bad_definition_spec, term()}}
   def parse_definition_spec({name, arity}) when is_atom(name) and is_integer(arity),
     do: {:ok, {name, arity}}
 
   def parse_definition_spec(spec) when is_binary(spec) do
     # Split on the *last* slash so operator names like `//2` or `/2` work.
     case Regex.run(~r{\A(.+)/(\d+)\z}s, spec) do
-      [_, name, arity] -> {:ok, {String.to_atom(name), String.to_integer(arity)}}
+      [_, name, arity] -> {:ok, {name, String.to_integer(arity)}}
       _ -> {:error, {:bad_definition_spec, spec}}
     end
   end
 
   def parse_definition_spec(spec), do: {:error, {:bad_definition_spec, spec}}
+
+  @doc """
+  Resolve a parsed `{name, arity}` against already-parsed definitions,
+  returning the key with the definition's own atom name.
+
+  Never creates atoms. If no definition has that name the name is left
+  as the existing atom (if the VM happens to know one, which keeps
+  error terms stable) or the original string; either way it matches
+  nothing in `defs`.
+  """
+  @spec resolve_key({atom() | String.t(), non_neg_integer()}, [t()]) ::
+          {atom() | String.t(), non_neg_integer()}
+  def resolve_key({name, arity}, _defs) when is_atom(name), do: {name, arity}
+
+  def resolve_key({name, arity}, defs) when is_binary(name) do
+    case Enum.find(defs, &(Atom.to_string(&1.name) == name)) do
+      %__MODULE__{name: atom} -> {atom, arity}
+      nil -> {existing_atom_or_string(name), arity}
+    end
+  end
+
+  defp existing_atom_or_string(name) do
+    String.to_existing_atom(name)
+  rescue
+    ArgumentError -> name
+  end
 
   defp effective_allowlist(opts) do
     app_level =

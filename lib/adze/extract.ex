@@ -124,12 +124,13 @@ defmodule Adze.Extract do
   @spec extract(String.t(), opts()) :: {:ok, result()} | {:error, term()}
   def extract(source, opts) when is_binary(source) and is_list(opts) do
     with {:ok, def_spec_raw} <- fetch_opt(opts, :definition),
-         {:ok, def_key} <- parse_def_spec(def_spec_raw),
+         {:ok, parsed_key} <- Definition.parse_definition_spec(def_spec_raw),
          {:ok, target_module} <- fetch_opt(opts, :module),
          :ok <- validate_module_name(target_module),
          {:ok, target_path} <- resolve_target_path(target_module, opts),
          :ok <- check_target_path_free(target_path),
          {:ok, all_defs} <- Definition.list(source, opts),
+         def_key = Definition.resolve_key(parsed_key, all_defs),
          {:ok, source_module} <- resolve_source_module(all_defs, def_key, opts),
          {:ok, ast} <- parse(source),
          {:ok, body_info} <- collect_body_info(ast, source_module),
@@ -456,21 +457,6 @@ defmodule Adze.Extract do
       {:ok, {n, a}} when is_atom(n) and is_integer(a) -> {:ok, {n, a}}
       {:ok, other} -> {:error, {:bad_opt, key, other}}
       :error -> {:error, {:missing_opt, key}}
-    end
-  end
-
-  defp parse_def_spec({n, a}) when is_atom(n) and is_integer(a) and a >= 0, do: {:ok, {n, a}}
-
-  defp parse_def_spec(str) when is_binary(str) do
-    case String.split(str, "/", parts: 2) do
-      [name, arity_str] when name != "" ->
-        case Integer.parse(arity_str) do
-          {n, ""} when n >= 0 -> {:ok, {String.to_atom(name), n}}
-          _ -> {:error, {:bad_definition_spec, str}}
-        end
-
-      _ ->
-        {:error, {:bad_definition_spec, str}}
     end
   end
 

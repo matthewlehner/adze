@@ -151,8 +151,9 @@ defmodule Adze.ExtractPrivate do
   defp find_definition(source, spec, opts) do
     from_module = Keyword.get(opts, :from_module)
 
-    with {:ok, {name, arity}} <- Definition.parse_definition_spec(spec),
+    with {:ok, parsed} <- Definition.parse_definition_spec(spec),
          {:ok, defs} <- Definition.list(source, opts) do
+      {name, arity} = Definition.resolve_key(parsed, defs)
       matches = Enum.filter(defs, &(&1.name == name and &1.arity == arity))
 
       pick_match(matches, name, arity, from_module)
