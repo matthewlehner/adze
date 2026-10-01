@@ -115,6 +115,7 @@ defmodule Adze.Extract do
           source_diff: String.t(),
           source_module: String.t(),
           public_closure_keys: [{atom(), non_neg_integer()}],
+          call_site_arities: %{{atom(), non_neg_integer()} => [non_neg_integer()]},
           caller_diffs: %{Path.t() => String.t()},
           dropped_directives: [dropped_directive()],
           promoted: [{atom(), non_neg_integer()}]
@@ -191,6 +192,13 @@ defmodule Adze.Extract do
           |> Enum.filter(&(&1.visibility == :public))
           |> Enum.map(&{&1.name, &1.arity})
 
+        # Default arguments make one definition callable at several
+        # arities; callers at any of them must be rewritten.
+        call_site_arities =
+          closure_defs
+          |> Enum.filter(&(&1.visibility == :public))
+          |> Map.new(&{{&1.name, &1.arity}, Definition.callable_arities(&1)})
+
         {:ok,
          %{
            target_module: target_module,
@@ -200,6 +208,7 @@ defmodule Adze.Extract do
            source_diff: Adze.Diff.unified(source, new_source),
            source_module: source_module,
            public_closure_keys: public_closure_keys,
+           call_site_arities: call_site_arities,
            caller_diffs: %{},
            dropped_directives: dropped_directives,
            promoted: promoted
@@ -304,9 +313,13 @@ defmodule Adze.Extract do
     target_mod = string_to_module(single.target_module)
 
     {:ok,
-     Enum.reduce(single.public_closure_keys, rewrite, fn {name, arity}, rw ->
+     Enum.reduce(single.public_closure_keys, rewrite, fn {name, arity} = key, rw ->
+       arities = Map.get(single.call_site_arities, key, [arity])
+
        {:ok, rw} =
-         ProjectRewrite.rename_function(rw, {source_mod, name}, {target_mod, name}, arity: arity)
+         ProjectRewrite.rename_function(rw, {source_mod, name}, {target_mod, name},
+           arity: arities
+         )
 
        rw
      end)}

@@ -492,6 +492,7 @@ defmodule Adze do
         source_diff: "...",
         source_module: "MyApp.Parser",
         public_closure_keys: [parse: 1],
+        call_site_arities: %{{:parse, 1} => [1]},
         caller_diffs: %{"lib/other.ex" => "..."},
         dropped_directives: [%{kind: :import, line: 3, text: "import Helpers"}]
       }

@@ -1334,6 +1334,32 @@ defmodule AdzeExtractTest do
       assert caller_diff =~ "MyApp.PublicEntry"
     end
 
+    test "rewrites callers using a default-argument arity" do
+      files = %{
+        "lib/source.ex" => ~S"""
+        defmodule MyApp.Source do
+          def public_entry(a, b \\ 1), do: {a, b}
+        end
+        """,
+        "lib/caller.ex" => """
+        defmodule MyApp.Caller do
+          def go, do: MyApp.Source.public_entry(:value)
+        end
+        """
+      }
+
+      {:ok, result} =
+        Extract.extract_file("lib/source.ex",
+          definition: "public_entry/2",
+          module: "MyApp.PublicEntry",
+          files: files
+        )
+
+      caller_diff = result.caller_diffs["lib/caller.ex"]
+      assert caller_diff, "expected the public_entry/1 call site to be rewritten"
+      assert caller_diff =~ "MyApp.PublicEntry.public_entry(:value)"
+    end
+
     test "rewrites &SourceModule.target/n captures in callers" do
       files = %{
         "lib/source.ex" => """
