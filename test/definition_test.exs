@@ -8,6 +8,64 @@ defmodule AdzeDefinitionTest do
     d
   end
 
+  describe "callable_arities/1" do
+    defp arities(src, name, arity) do
+      {:ok, defs} = Adze.Definition.list(src)
+      d = Enum.find(defs, &(&1.name == name and &1.arity == arity))
+      Adze.Definition.callable_arities(d)
+    end
+
+    test "no defaults" do
+      assert arities("defmodule M do\n  def f(a, b), do: {a, b}\nend\n", :f, 2) == [2]
+    end
+
+    test "multiple defaults" do
+      src = ~S"""
+      defmodule M do
+        def f(a, b \\ 1, c \\ 2), do: {a, b, c}
+      end
+      """
+
+      assert arities(src, :f, 3) == [1, 2, 3]
+    end
+
+    test "default in a bodiless head with guards across clauses" do
+      src = ~S"""
+      defmodule M do
+        def f(a, b \\ 1) when is_atom(a)
+        def f(a, b) when is_atom(a), do: {a, b}
+        def f(a, b), do: {b, a}
+      end
+      """
+
+      assert arities(src, :f, 2) == [1, 2]
+    end
+
+    test "guarded single clause with a default" do
+      src = ~S"""
+      defmodule M do
+        def f(a, b \\ 1) when is_integer(b), do: {a, b}
+      end
+      """
+
+      assert arities(src, :f, 2) == [1, 2]
+    end
+  end
+
+  describe "parse_definition_spec/1" do
+    test "strings, tuples, operators and errors" do
+      alias Adze.Definition
+      assert {:ok, {:foo, 2}} = Definition.parse_definition_spec("foo/2")
+      assert {:ok, {:foo, 2}} = Definition.parse_definition_spec({:foo, 2})
+      assert {:ok, {:/, 2}} = Definition.parse_definition_spec("//2")
+      assert {:ok, {:+, 2}} = Definition.parse_definition_spec("+/2")
+
+      for bad <- ["foo", "foo/", "/2x", "foo/-1", 42] do
+        assert {:error, {:bad_definition_spec, ^bad}} = Definition.parse_definition_spec(bad)
+      end
+    end
+  end
+
   describe "find/2" do
     test "locates by name/arity string" do
       source = """
