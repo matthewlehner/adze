@@ -52,6 +52,23 @@ defmodule AdzeDefinitionTest do
     end
   end
 
+  describe "non-alias module names" do
+    test "are recorded as written" do
+      source = """
+      defmodule :my_erl_mod do
+        def a, do: :ok
+      end
+
+      defmodule Module.concat([:x, "Y"]) do
+        def b, do: :ok
+      end
+      """
+
+      {:ok, defs} = Definition.list(source)
+      assert Enum.map(defs, & &1.module) == [":my_erl_mod", ~S|Module.concat([:x, "Y"])|]
+    end
+  end
+
   describe "atom safety" do
     test "unknown names in string specs never create atoms" do
       name = "never_seen_#{System.unique_integer([:positive])}_fn"

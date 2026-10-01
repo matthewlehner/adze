@@ -202,8 +202,8 @@ defmodule Adze.CLI do
 
       {:error, {:unsupported_module, module}} ->
         die(
-          "cannot check callers of a definition in module #{inspect(module)}: " <>
-            "only Foo.Bar-style module names can be searched"
+          "cannot check callers of definitions in `defmodule #{module}`: " <>
+            "find-callers only searches Foo.Bar-style module names"
         )
 
       {:error, {:ambiguous_attribute, _} = err} ->

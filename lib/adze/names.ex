@@ -35,4 +35,15 @@ defmodule Adze.Names do
   end
 
   def valid_module_name?(_), do: false
+
+  @doc """
+  A readable label for a `defmodule` name that isn't a plain alias: an
+  atom (`:my_mod`) or an expression (`Module.concat([:a])`), rendered as
+  written. Such labels never pass `valid_module_name?/1`, so they can't be
+  mistaken for a real `Foo.Bar` module.
+  """
+  @spec module_expr_label(Macro.t()) :: String.t()
+  def module_expr_label(atom) when is_atom(atom), do: inspect(atom)
+  def module_expr_label({:__block__, _, [atom]}) when is_atom(atom), do: inspect(atom)
+  def module_expr_label(ast), do: Sourceror.to_string(ast)
 end

@@ -126,6 +126,19 @@ defmodule Adze.FindCallersTest do
     end
   end
 
+  describe "find_callers/2 — non-alias enclosing modules" do
+    test "in_module is the module as written, matching Adze.Definition" do
+      files = %{
+        "lib/c.ex" => "defmodule :my_erl_mod do\n  def go, do: MyApp.Foo.bar(1)\nend\n"
+      }
+
+      {:ok, %{files: %{"lib/c.ex" => [ref]}}} =
+        FindCallers.find_callers("MyApp.Foo.bar/1", files: files)
+
+      assert ref.in_module == ":my_erl_mod"
+    end
+  end
+
   describe "find_callers/2 — string module in tuple targets" do
     test "behaves like the atom form; rejects malformed names" do
       files = %{"lib/c.ex" => "defmodule C do\n  def go, do: MyApp.Foo.bar(1)\nend\n"}

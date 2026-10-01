@@ -196,8 +196,9 @@ defmodule Adze.ExtractPrivate do
     do: {:error, {:already_private, %{kind: kind, definition: {n, a}}}}
 
   # `find-callers` can only search for a `Foo.Bar` module. Anything else
-  # (`defmodule :erlang_style`, a dynamic name recorded as "?") can't be
-  # searched, so refuse the flip rather than claim there are no callers.
+  # (`defmodule :erlang_style`, `defmodule Module.concat(...)`, recorded
+  # as written) can't be searched, so refuse the flip rather than claim
+  # there are no callers.
   defp ensure_searchable_module(%Definition{module: module}) do
     if Adze.Names.valid_module_name?(module),
       do: :ok,

@@ -290,8 +290,9 @@ defmodule Adze.ExtractPrivateTest do
 
     test "modules find-callers can't search are refused, not reported as caller-free" do
       for {source, module} <- [
-            {"defmodule :my_erl_mod do\n  def helper, do: :ok\nend\n", "?"},
-            {"defmodule Module.concat([:a]) do\n  def helper, do: :ok\nend\n", "?"}
+            {"defmodule :my_erl_mod do\n  def helper, do: :ok\nend\n", ":my_erl_mod"},
+            {"defmodule Module.concat([:a]) do\n  def helper, do: :ok\nend\n",
+             "Module.concat([:a])"}
           ] do
         assert {:error, {:unsupported_module, ^module}} =
                  ExtractPrivate.extract_private(source,

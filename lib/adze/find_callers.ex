@@ -401,8 +401,7 @@ defmodule Adze.FindCallers do
     parts |> Enum.filter(&is_atom/1) |> Enum.map(&Atom.to_string/1) |> Enum.join(".")
   end
 
-  defp alias_name(atom) when is_atom(atom), do: inspect(atom)
-  defp alias_name(_), do: "?"
+  defp alias_name(other), do: Adze.Names.module_expr_label(other)
 
   defp arity_matches?(:any, _), do: true
   defp arity_matches?(wanted, arity) when is_list(wanted), do: arity in wanted

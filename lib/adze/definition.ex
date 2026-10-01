@@ -271,8 +271,7 @@ defmodule Adze.Definition do
     parts |> Enum.map(&Atom.to_string/1) |> Enum.join(".")
   end
 
-  defp alias_name(atom) when is_atom(atom), do: inspect(atom)
-  defp alias_name(_), do: "?"
+  defp alias_name(other), do: Adze.Names.module_expr_label(other)
 
   # --- per-module grouping state machine ----------------------------------
   #

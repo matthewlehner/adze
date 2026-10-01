@@ -612,8 +612,7 @@ defmodule Adze.Extract do
   defp alias_name({:__aliases__, _, parts}) when is_list(parts),
     do: parts |> Enum.map(&Atom.to_string/1) |> Enum.join(".")
 
-  defp alias_name(a) when is_atom(a), do: inspect(a)
-  defp alias_name(_), do: "?"
+  defp alias_name(other), do: Adze.Names.module_expr_label(other)
 
   defp directive?({kind, _, args}) when kind in @directive_kinds and is_list(args), do: true
   defp directive?(_), do: false
