@@ -187,15 +187,10 @@ defmodule Adze.Definition do
     do: {:ok, {name, arity}}
 
   def parse_definition_spec(spec) when is_binary(spec) do
-    case String.split(spec, "/") do
-      [name, arity_str] when name != "" ->
-        case Integer.parse(arity_str) do
-          {n, ""} when n >= 0 -> {:ok, {String.to_atom(name), n}}
-          _ -> {:error, {:bad_definition_spec, spec}}
-        end
-
-      _ ->
-        {:error, {:bad_definition_spec, spec}}
+    # Split on the *last* slash so operator names like `//2` or `/2` work.
+    case Regex.run(~r{\A(.+)/(\d+)\z}s, spec) do
+      [_, name, arity] -> {:ok, {String.to_atom(name), String.to_integer(arity)}}
+      _ -> {:error, {:bad_definition_spec, spec}}
     end
   end
 
