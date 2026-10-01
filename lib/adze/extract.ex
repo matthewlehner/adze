@@ -149,11 +149,15 @@ defmodule Adze.Extract do
       {closure_defs, promoted} = promote_target(closure_defs, def_key)
       promoted_keys = MapSet.new(promoted)
 
+      closure_keys_all = MapSet.new(closure_defs, &{&1.name, &1.arity})
+
+      # Default arguments make a def callable at several arities, so a
+      # bare `entry(:x)` still refers to `entry/2` and must be qualified.
       source_remaining_keys =
         all_defs
         |> Enum.filter(&(&1.module == source_module))
-        |> MapSet.new(&{&1.name, &1.arity})
-        |> MapSet.difference(MapSet.new(closure_defs, &{&1.name, &1.arity}))
+        |> Enum.reject(&MapSet.member?(closure_keys_all, {&1.name, &1.arity}))
+        |> callable_keys()
 
       try do
         target_content =
@@ -976,7 +980,7 @@ defmodule Adze.Extract do
     rewrite_keys =
       closure_defs
       |> Enum.filter(&(&1.visibility == :public))
-      |> MapSet.new(&{&1.name, &1.arity})
+      |> callable_keys()
 
     target_alias_atom =
       target_module |> String.split(".") |> List.last() |> String.to_atom()
@@ -1049,6 +1053,13 @@ defmodule Adze.Extract do
   end
 
   # --- caller rewriting --------------------------------------------------
+
+  # `{name, arity}` for every arity each definition can be called with.
+  defp callable_keys(defs) do
+    defs
+    |> Enum.flat_map(fn d -> Enum.map(Definition.callable_arities(d), &{d.name, &1}) end)
+    |> MapSet.new()
+  end
 
   defp build_rewrite_ops(all_defs, source_module, closure_keys, rewrite_keys, target_alias_atom) do
     all_defs

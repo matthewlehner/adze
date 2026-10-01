@@ -1514,4 +1514,29 @@ defmodule AdzeExtractTest do
       assert caller_after =~ ~r/XFile\.Shout\.shout/
     end
   end
+
+  describe "default-argument arities inside the source file" do
+    @src ~S"""
+    defmodule MyApp.S do
+      def entry(a, b \\ 1), do: {a, b}
+      def local_user, do: entry(:x)
+      def piped, do: :x |> entry()
+      def captured, do: &entry/1
+    end
+    """
+
+    test "extracting the defaulted def qualifies in-file calls at every arity" do
+      {:ok, r} = Extract.extract(@src, definition: "entry/2", module: "MyApp.T")
+
+      assert r.new_source =~ "T.entry(:x)"
+      assert r.new_source =~ ":x |> T.entry()"
+      assert r.new_source =~ "&T.entry/1"
+    end
+
+    test "extracting a caller qualifies its default-arity call to the def left behind" do
+      {:ok, r} = Extract.extract(@src, definition: "local_user/0", module: "MyApp.T")
+
+      assert r.target_content =~ "MyApp.S.entry(:x)"
+    end
+  end
 end
