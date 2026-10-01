@@ -37,6 +37,8 @@ defmodule Adze.Aliases do
   grouping.
   """
 
+  alias Adze.Names
+
   @directives [:alias, :import, :require, :use]
 
   @type directive :: %{
@@ -82,12 +84,12 @@ defmodule Adze.Aliases do
   end
 
   defp walk_modules({:defmodule, _meta, [alias_ast, [{_do, body}]]} = node, acc, prefix, lines) do
-    name = qualify(prefix, alias_name(alias_ast))
+    name = Adze.Names.defmodule_name(alias_ast, prefix)
 
     entry = %{
       name: name,
       range: range(node),
-      directives: collect_directives(body, lines)
+      directives: collect_directives(body, name, lines)
     }
 
     walk_modules(body, [entry | acc], name, lines)
@@ -95,32 +97,30 @@ defmodule Adze.Aliases do
 
   defp walk_modules(_other, acc, _prefix, _lines), do: acc
 
-  defp qualify("", name), do: name
-  defp qualify(prefix, name), do: prefix <> "." <> name
-
   # --- per-module directives ---------------------------------------------
 
-  defp collect_directives({:__block__, _, exprs}, lines),
-    do: Enum.flat_map(exprs, &directive_node(&1, lines))
+  # `module` is the enclosing module, so `__MODULE__`-based targets resolve.
+  defp collect_directives({:__block__, _, exprs}, module, lines),
+    do: Enum.flat_map(exprs, &directive_node(&1, module, lines))
 
-  defp collect_directives(expr, lines), do: directive_node(expr, lines)
+  defp collect_directives(expr, module, lines), do: directive_node(expr, module, lines)
 
-  defp directive_node({kind, _meta, args} = node, lines) when kind in @directives do
+  defp directive_node({kind, _meta, args} = node, module, lines) when kind in @directives do
     r = range(node)
-    expand_directive(kind, args, r, source_slice(lines, r))
+    expand_directive(kind, args, module, r, source_slice(lines, r))
   end
 
-  defp directive_node(_, _lines), do: []
+  defp directive_node(_, _module, _lines), do: []
 
   # alias Foo.{A, B, C.D}  →  one entry per member, all sharing the
   # original line range + text + group: true.
-  defp expand_directive(:alias, [{{:., _, [base, :{}]}, _, members}], r, text) do
-    base_str = alias_name(base)
+  defp expand_directive(:alias, [{{:., _, [base, :{}]}, _, members}], module, r, text) do
+    base_str = Names.module_ref(base, module)
 
     Enum.map(members, fn member ->
       %{
         kind: :alias,
-        target: base_str <> "." <> alias_name(member),
+        target: base_str <> "." <> Names.module_ref(member, ""),
         as: nil,
         group: true,
         text: text,
@@ -130,11 +130,11 @@ defmodule Adze.Aliases do
   end
 
   # alias/import/require/use Mod
-  defp expand_directive(kind, [target], r, text) do
+  defp expand_directive(kind, [target], module, r, text) do
     [
       %{
         kind: kind,
-        target: alias_name(target),
+        target: Names.module_ref(target, module),
         as: nil,
         group: false,
         text: text,
@@ -144,11 +144,11 @@ defmodule Adze.Aliases do
   end
 
   # alias Mod, as: Other  /  import Mod, only: [...]  /  use Mod, opt: val
-  defp expand_directive(kind, [target, kw], r, text) do
+  defp expand_directive(kind, [target, kw], module, r, text) do
     [
       %{
         kind: kind,
-        target: alias_name(target),
+        target: Names.module_ref(target, module),
         as: if(kind == :alias, do: extract_as(kw), else: nil),
         group: false,
         text: text,
@@ -157,12 +157,12 @@ defmodule Adze.Aliases do
     ]
   end
 
-  defp expand_directive(_kind, _args, _r, _text), do: []
+  defp expand_directive(_kind, _args, _module, _r, _text), do: []
 
   defp extract_as(kw) when is_list(kw) do
     Enum.find_value(kw, fn
-      {{:__block__, _, [:as]}, alias_ast} -> alias_name(alias_ast)
-      {:as, alias_ast} -> alias_name(alias_ast)
+      {{:__block__, _, [:as]}, alias_ast} -> Names.module_ref(alias_ast, "")
+      {:as, alias_ast} -> Names.module_ref(alias_ast, "")
       _ -> nil
     end)
   end
@@ -179,13 +179,6 @@ defmodule Adze.Aliases do
     |> Enum.join("\n")
     |> String.trim_leading()
   end
-
-  defp alias_name({:__aliases__, _, parts}) when is_list(parts) do
-    parts |> Enum.map(&Atom.to_string/1) |> Enum.join(".")
-  end
-
-  defp alias_name(atom) when is_atom(atom), do: inspect(atom)
-  defp alias_name(other), do: Macro.to_string(other)
 
   defp range(node) do
     case Sourceror.get_range(node) do

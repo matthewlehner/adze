@@ -127,7 +127,7 @@ defmodule Adze.Outline do
   end
 
   defp child_definition({kind, _meta, [target | _]} = node) when kind in @directives do
-    %{kind: kind, target: alias_or_atom(target), range: range(node)}
+    %{kind: kind, target: alias_name(target), range: range(node)}
   end
 
   defp child_definition({:@, _meta, [{name, _, value_ast}]} = node) when is_atom(name) do
@@ -159,19 +159,16 @@ defmodule Adze.Outline do
   defp name_arity({name, _, nil}) when is_atom(name), do: {name, 0, false}
   defp name_arity(_), do: {:unknown, 0, false}
 
-  defp alias_name({:__aliases__, _, parts}) when is_list(parts) do
-    parts |> Enum.map(&Atom.to_string/1) |> Enum.join(".")
+  # Names are shown as written; `__MODULE__.Inner` and other non-atom
+  # parts fall through to the source snippet.
+  defp alias_name({:__aliases__, _, parts} = ast) when is_list(parts) do
+    if Enum.all?(parts, &is_atom/1),
+      do: parts |> Enum.map(&Atom.to_string/1) |> Enum.join("."),
+      else: snippet(ast)
   end
 
   defp alias_name(atom) when is_atom(atom), do: inspect(atom)
   defp alias_name(other), do: snippet(other)
-
-  defp alias_or_atom({:__aliases__, _, parts}) when is_list(parts) do
-    parts |> Enum.map(&Atom.to_string/1) |> Enum.join(".")
-  end
-
-  defp alias_or_atom(atom) when is_atom(atom), do: inspect(atom)
-  defp alias_or_atom(other), do: snippet(other)
 
   # Sourceror wraps literals — `[:id, :name, count: 0]` parses as
   #   {:__block__, _, [[atom_block, atom_block, {key_block, val_block}]]}
@@ -193,7 +190,7 @@ defmodule Adze.Outline do
   defp unwrap_atom(_), do: nil
 
   defp defimpl_name([protocol | rest]) do
-    proto = alias_or_atom(protocol)
+    proto = alias_name(protocol)
 
     for_target =
       Enum.find_value(rest, fn
@@ -210,7 +207,7 @@ defmodule Adze.Outline do
   defp defimpl_name(_), do: "unknown"
 
   defp maybe_target(nil), do: nil
-  defp maybe_target(target), do: alias_or_atom(target)
+  defp maybe_target(target), do: alias_name(target)
 
   # @spec foo(...) :: ... — extract the function name being spec'd
   defp attribute_target(:spec, [{:"::", _, [{name, _, _args}, _]}]) when is_atom(name), do: name
@@ -219,7 +216,7 @@ defmodule Adze.Outline do
   defp attribute_target(:opaque, [{:"::", _, [{name, _, _args}, _]}]) when is_atom(name), do: name
 
   defp attribute_target(:impl, [value]) when is_atom(value) or is_boolean(value), do: value
-  defp attribute_target(:behaviour, [value]), do: alias_or_atom(value)
+  defp attribute_target(:behaviour, [value]), do: alias_name(value)
   defp attribute_target(_, _), do: nil
 
   defp range(node) do

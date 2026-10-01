@@ -254,7 +254,7 @@ defmodule Adze.Definition do
   end
 
   defp walk_modules({:defmodule, _meta, [alias_ast, [{_do, body}]]}, prefix, acc, allowlist) do
-    name = qualify(prefix, alias_name(alias_ast))
+    name = Adze.Names.defmodule_name(alias_ast, prefix)
     here = group_body(body_to_list(body), name, allowlist)
     walk_modules(body, name, acc ++ here, allowlist)
   end
@@ -263,15 +263,6 @@ defmodule Adze.Definition do
 
   defp body_to_list({:__block__, _, exprs}), do: exprs
   defp body_to_list(single), do: [single]
-
-  defp qualify("", n), do: n
-  defp qualify(prefix, n), do: prefix <> "." <> n
-
-  defp alias_name({:__aliases__, _, parts}) when is_list(parts) do
-    parts |> Enum.map(&Atom.to_string/1) |> Enum.join(".")
-  end
-
-  defp alias_name(other), do: Adze.Names.module_expr_label(other)
 
   # --- per-module grouping state machine ----------------------------------
   #

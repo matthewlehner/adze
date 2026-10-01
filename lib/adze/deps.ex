@@ -68,7 +68,7 @@ defmodule Adze.Deps do
   end
 
   defp walk_modules({:defmodule, _meta, [alias_ast, [{_do, body}]]} = node, acc, prefix) do
-    name = qualify(prefix, alias_name(alias_ast))
+    name = Adze.Names.defmodule_name(alias_ast, prefix)
 
     entry = %{
       name: name,
@@ -80,9 +80,6 @@ defmodule Adze.Deps do
   end
 
   defp walk_modules(_other, acc, _prefix), do: acc
-
-  defp qualify("", name), do: name
-  defp qualify(prefix, name), do: prefix <> "." <> name
 
   # --- per-module analysis -----------------------------------------------
 
@@ -293,13 +290,6 @@ defmodule Adze.Deps do
   defp unwrap_int(_), do: nil
 
   # --- helpers -----------------------------------------------------------
-
-  defp alias_name({:__aliases__, _, parts}) when is_list(parts) do
-    parts |> Enum.map(&Atom.to_string/1) |> Enum.join(".")
-  end
-
-  defp alias_name(atom) when is_atom(atom), do: inspect(atom)
-  defp alias_name(other), do: Macro.to_string(other)
 
   defp range(node) do
     case Sourceror.get_range(node) do

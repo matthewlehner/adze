@@ -587,7 +587,7 @@ defmodule Adze.Extract do
   end
 
   defp find_defmodule({:defmodule, _meta, [alias_ast, [{_do, body}]]} = node, prefix, target) do
-    name = qualify(prefix, alias_name(alias_ast))
+    name = Adze.Names.defmodule_name(alias_ast, prefix)
 
     cond do
       name == target ->
@@ -605,14 +605,6 @@ defmodule Adze.Extract do
 
   defp body_to_list({:__block__, _, exprs}), do: exprs
   defp body_to_list(single), do: [single]
-
-  defp qualify("", n), do: n
-  defp qualify(p, n), do: p <> "." <> n
-
-  defp alias_name({:__aliases__, _, parts}) when is_list(parts),
-    do: parts |> Enum.map(&Atom.to_string/1) |> Enum.join(".")
-
-  defp alias_name(other), do: Adze.Names.module_expr_label(other)
 
   defp directive?({kind, _, args}) when kind in @directive_kinds and is_list(args), do: true
   defp directive?(_), do: false

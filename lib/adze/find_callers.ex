@@ -323,7 +323,7 @@ defmodule Adze.FindCallers do
         %{refs: [], scope: [], aliases: %{}, alias_stack: []},
         fn
           {:defmodule, _, [alias_ast, _]} = node, acc ->
-            name = qualify_scope(acc.scope, alias_name(alias_ast))
+            name = Adze.Names.defmodule_name(alias_ast, current_scope(acc.scope) || "")
 
             {node,
              %{acc | scope: [name | acc.scope], alias_stack: [acc.aliases | acc.alias_stack]}}
@@ -393,15 +393,6 @@ defmodule Adze.FindCallers do
 
   defp current_scope([]), do: nil
   defp current_scope([top | _]), do: top
-
-  defp qualify_scope([], name), do: name
-  defp qualify_scope([parent | _], name), do: parent <> "." <> name
-
-  defp alias_name({:__aliases__, _, parts}) when is_list(parts) do
-    parts |> Enum.filter(&is_atom/1) |> Enum.map(&Atom.to_string/1) |> Enum.join(".")
-  end
-
-  defp alias_name(other), do: Adze.Names.module_expr_label(other)
 
   defp arity_matches?(:any, _), do: true
   defp arity_matches?(wanted, arity) when is_list(wanted), do: arity in wanted
