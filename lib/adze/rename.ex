@@ -152,7 +152,7 @@ defmodule Adze.Rename do
   end
 
   defp parse_module(str, key) do
-    if Regex.match?(~r/^[A-Z][A-Za-z0-9_]*(\.[A-Z][A-Za-z0-9_]*)*$/, str) do
+    if Adze.Names.valid_module_name?(str) do
       {:ok, Module.concat([str])}
     else
       {:error, {:bad_module_name, key, str}}

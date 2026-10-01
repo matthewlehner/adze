@@ -109,6 +109,16 @@ defmodule AdzeRenameTest do
                Rename.rename(from: "MyApp.Old", to: "bad-name", files: %{})
     end
 
+    test "rejects over-long module names instead of raising" do
+      long = "A" <> String.duplicate("b", 300)
+
+      assert {:error, {:bad_module_name, :from, ^long}} =
+               Rename.rename(from: long, to: "MyApp.New", files: %{})
+
+      assert {:error, {:bad_module_name, :to, ^long}} =
+               Rename.rename(from: "MyApp.Old", to: long, files: %{})
+    end
+
     test "accepts module atoms directly" do
       files = %{
         "lib/old.ex" => """
