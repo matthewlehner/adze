@@ -454,6 +454,20 @@ defmodule Adze.FindCallersTest do
   end
 
   describe "Formatter.format_find_callers/2" do
+    test "json output encodes arity lists as arrays and :any as a string" do
+      {:ok, list} = FindCallers.find_callers({MyApp.Foo, :bar, [1, 2]}, files: %{})
+      {:ok, any} = FindCallers.find_callers({MyApp.Foo, :bar}, files: %{})
+
+      decode =
+        &(&1
+          |> Adze.Formatter.format_find_callers(:json)
+          |> IO.iodata_to_binary()
+          |> JSON.decode!())
+
+      assert decode.(list)["target"]["arity"] == [1, 2]
+      assert decode.(any)["target"]["arity"] == "any"
+    end
+
     test "text output renders an arity-list target as Mod.fun/1,2" do
       {:ok, result} = FindCallers.find_callers({MyApp.Foo, :bar, [1, 2]}, files: %{})
       text = Adze.Formatter.format_find_callers(result, :text)
