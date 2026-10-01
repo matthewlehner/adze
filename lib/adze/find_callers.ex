@@ -68,7 +68,7 @@ defmodule Adze.FindCallers do
 
   @type target :: %{
           module: String.t(),
-          function: atom(),
+          function: atom() | String.t(),
           arity: non_neg_integer() | [non_neg_integer()] | :any
         }
 
@@ -122,10 +122,15 @@ defmodule Adze.FindCallers do
            str
          ) do
       [_, mod, fun, arity] ->
-        {:ok, %{module: mod, function: String.to_atom(fun), arity: parse_arity_str(arity)}}
+        {:ok,
+         %{
+           module: mod,
+           function: Adze.Names.existing_atom_or_string(fun),
+           arity: parse_arity_str(arity)
+         }}
 
       [_, mod, fun] ->
-        {:ok, %{module: mod, function: String.to_atom(fun), arity: :any}}
+        {:ok, %{module: mod, function: Adze.Names.existing_atom_or_string(fun), arity: :any}}
 
       _ ->
         {:error, {:bad_target, str}}
@@ -401,7 +406,7 @@ defmodule Adze.FindCallers do
 
           resolved ->
             resolved == target.module and
-              fun == target.function and
+              Adze.Names.name_matches?(target.function, fun) and
               arity_matches?(target.arity, arity)
         end
     end

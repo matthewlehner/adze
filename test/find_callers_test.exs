@@ -101,6 +101,31 @@ defmodule Adze.FindCallersTest do
     end
   end
 
+  describe "find_callers/2 — atom safety" do
+    test "an unknown function name in a string target creates no atom" do
+      name = "never_seen_#{System.unique_integer([:positive])}_fn"
+      assert {:ok, %{total: 0}} = FindCallers.find_callers("MyApp.Foo.#{name}/1", files: %{})
+      assert_raise ArgumentError, fn -> String.to_existing_atom(name) end
+    end
+
+    test "a function name only the scanned source knows still matches" do
+      name = "dyn_#{System.unique_integer([:positive])}_fn"
+
+      files = %{
+        "lib/c.ex" => "defmodule C do\n  def go, do: MyApp.Foo.#{name}(1)\nend\n"
+      }
+
+      assert {:ok, %{total: 1, target: %{function: fun}}} =
+               FindCallers.find_callers("MyApp.Foo.#{name}/1", files: files)
+
+      assert to_string(fun) == name
+
+      {:ok, result} = FindCallers.find_callers("MyApp.Foo.#{name}/1", files: files)
+      text = Adze.Formatter.format_find_callers(result, :text)
+      assert IO.iodata_to_binary(text) =~ "MyApp.Foo.#{name}/1"
+    end
+  end
+
   describe "find_callers/2 — arity lists" do
     test "matches any arity in the list and reports it on the target" do
       files = %{

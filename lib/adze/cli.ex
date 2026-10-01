@@ -535,8 +535,15 @@ defmodule Adze.CLI do
     end
   end
 
-  defp op_atom(":" <> op), do: String.to_atom(op)
-  defp op_atom(op), do: String.to_atom(op)
+  # Every valid op is already an atom (they appear in `main/1`'s clauses),
+  # so an unknown one stays a string, reported by the `unknown op` clause.
+  defp op_atom(":" <> op), do: op_atom(op)
+
+  defp op_atom(op) do
+    String.to_existing_atom(op)
+  rescue
+    ArgumentError -> op
+  end
 
   defp die(msg) do
     IO.puts(:stderr, msg)

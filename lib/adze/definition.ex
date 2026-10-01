@@ -219,14 +219,8 @@ defmodule Adze.Definition do
   def resolve_key({name, arity}, defs) when is_binary(name) do
     case Enum.find(defs, &(Atom.to_string(&1.name) == name)) do
       %__MODULE__{name: atom} -> {atom, arity}
-      nil -> {existing_atom_or_string(name), arity}
+      nil -> {Adze.Names.existing_atom_or_string(name), arity}
     end
-  end
-
-  defp existing_atom_or_string(name) do
-    String.to_existing_atom(name)
-  rescue
-    ArgumentError -> name
   end
 
   defp effective_allowlist(opts) do

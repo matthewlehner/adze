@@ -75,6 +75,14 @@ defmodule AdzeDefinitionTest do
       assert_raise ArgumentError, fn -> String.to_existing_atom(name) end
     end
 
+    test "an over-long target module name is rejected, not raised on" do
+      source = "defmodule M do\n  def real, do: :ok\nend\n"
+      long = "A" <> String.duplicate("b", 300)
+
+      assert {:error, {:bad_module_name, ^long}} =
+               Adze.Extract.extract(source, definition: "real/0", module: long)
+    end
+
     test "string specs resolve to the definition's own atom" do
       source = "defmodule M do\n  def real(a), do: a\nend\n"
       assert {:ok, %{name: :real}} = Definition.find(source, "real/1")

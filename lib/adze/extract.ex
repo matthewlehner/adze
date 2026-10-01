@@ -461,7 +461,10 @@ defmodule Adze.Extract do
   end
 
   defp validate_module_name(name) do
-    if Regex.match?(~r/^[A-Z][A-Za-z0-9_]*(\.[A-Z][A-Za-z0-9_]*)*$/, name) do
+    # The cap keeps `String.to_atom/1` on the name from raising (255-char
+    # atom limit) and bounds what a single call can intern.
+    if byte_size(name) <= 200 and
+         Regex.match?(~r/^[A-Z][A-Za-z0-9_]*(\.[A-Z][A-Za-z0-9_]*)*$/, name) do
       :ok
     else
       {:error, {:bad_module_name, name}}
