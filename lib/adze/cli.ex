@@ -239,7 +239,9 @@ defmodule Adze.CLI do
         IO.write(Formatter.format_find_callers(result, args.format))
 
       {:error, {:bad_target, t}} ->
-        die("bad --target value: #{inspect(t)} (expected Module.fun or Module.fun/arity)")
+        die(
+          "bad --target value: #{inspect(t)} (expected Module.fun, Module.fun/arity or Module.fun/a,b)"
+        )
 
       {:error, reason} ->
         die("find-callers failed: #{inspect(reason)}")
@@ -604,7 +606,9 @@ defmodule Adze.CLI do
       --target Mod.fun[/n] Reference target for find-callers. Arity
                            is optional — omit it to match any arity
                            (e.g. --target MyApp.Foo.bar or
-                           --target MyApp.Foo.bar/2).
+                           --target MyApp.Foo.bar/2). A comma list
+                           matches several arities
+                           (--target MyApp.Foo.bar/1,2).
       --force              Skip the post-check guard on rename! and
                            write even when surviving short refs are
                            detected. Use when you've verified the

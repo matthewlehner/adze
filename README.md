@@ -135,6 +135,9 @@ mix adze ls --file lib/my_app/accounts.ex
 # Find all callers of a function across the project
 mix adze find-callers --target MyApp.Accounts.register/1
 
+# Several arities at once (e.g. a function with default arguments)
+mix adze find-callers --target MyApp.Accounts.register/1,2
+
 # Extract a function + its private helpers into a new module
 mix adze extract! --file lib/my_app/accounts.ex --definition register/1 --module MyApp.Registration
 ```
