@@ -63,8 +63,8 @@ defmodule Adze.FindCallers do
 
   @type target_spec ::
           String.t()
-          | {module(), atom()}
-          | {module(), atom(), non_neg_integer() | [non_neg_integer()] | :any}
+          | {module() | String.t(), atom()}
+          | {module() | String.t(), atom(), non_neg_integer() | [non_neg_integer()] | :any}
 
   @type target :: %{
           module: String.t(),
@@ -98,23 +98,25 @@ defmodule Adze.FindCallers do
 
   # --- target parsing ----------------------------------------------------
 
-  defp parse_target({mod, fun, arity})
-       when is_atom(mod) and is_atom(fun) and (is_integer(arity) or arity == :any) do
-    {:ok, %{module: inspect(mod), function: fun, arity: arity}}
+  # The module may be an atom or a "Foo.Bar" string (so callers that
+  # only hold a name needn't intern an atom just to have it inspected).
+  defp parse_target({mod, fun, arity} = spec)
+       when (is_atom(mod) or is_binary(mod)) and is_atom(fun) and
+              (is_integer(arity) or arity == :any) do
+    build_target(mod, fun, arity, spec)
   end
 
   # A list of arities, e.g. every arity a definition with default
   # arguments is callable at.
   defp parse_target({mod, fun, [_ | _] = arities} = spec)
-       when is_atom(mod) and is_atom(fun) do
+       when (is_atom(mod) or is_binary(mod)) and is_atom(fun) do
     if Enum.all?(arities, &(is_integer(&1) and &1 >= 0)),
-      do: {:ok, %{module: inspect(mod), function: fun, arity: Enum.sort(Enum.uniq(arities))}},
+      do: build_target(mod, fun, Enum.sort(Enum.uniq(arities)), spec),
       else: {:error, {:bad_target, spec}}
   end
 
-  defp parse_target({mod, fun}) when is_atom(mod) and is_atom(fun) do
-    {:ok, %{module: inspect(mod), function: fun, arity: :any}}
-  end
+  defp parse_target({mod, fun} = spec) when (is_atom(mod) or is_binary(mod)) and is_atom(fun),
+    do: build_target(mod, fun, :any, spec)
 
   defp parse_target(str) when is_binary(str) do
     case Regex.run(
@@ -138,6 +140,18 @@ defmodule Adze.FindCallers do
   end
 
   defp parse_target(other), do: {:error, {:bad_target, other}}
+
+  defp build_target(mod, fun, arity, spec) do
+    case module_name(mod) do
+      {:ok, name} -> {:ok, %{module: name, function: fun, arity: arity}}
+      :error -> {:error, {:bad_target, spec}}
+    end
+  end
+
+  defp module_name(mod) when is_atom(mod), do: {:ok, inspect(mod)}
+
+  defp module_name(mod) when is_binary(mod),
+    do: if(Adze.Names.valid_module_name?(mod), do: {:ok, mod}, else: :error)
 
   # "2" -> 2; "1,2" -> [1, 2]
   defp parse_arity_str(str) do

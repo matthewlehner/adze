@@ -126,6 +126,20 @@ defmodule Adze.FindCallersTest do
     end
   end
 
+  describe "find_callers/2 — string module in tuple targets" do
+    test "behaves like the atom form; rejects malformed names" do
+      files = %{"lib/c.ex" => "defmodule C do\n  def go, do: MyApp.Foo.bar(1)\nend\n"}
+
+      assert {:ok, %{total: 1, target: %{module: "MyApp.Foo"}}} =
+               FindCallers.find_callers({"MyApp.Foo", :bar, [1, 2]}, files: files)
+
+      assert {:ok, %{total: 1}} = FindCallers.find_callers({"MyApp.Foo", :bar}, files: files)
+
+      assert {:error, {:bad_target, _}} =
+               FindCallers.find_callers({"not a module", :bar, 1}, files: files)
+    end
+  end
+
   describe "find_callers/2 — arity lists" do
     test "matches any arity in the list and reports it on the target" do
       files = %{

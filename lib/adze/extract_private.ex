@@ -201,7 +201,7 @@ defmodule Adze.ExtractPrivate do
   # Default arguments make `helper/2` callable as `helper/1` too, and
   # those callers break just the same, so search every callable arity.
   defp run_find_callers(%Definition{} = d, opts) do
-    target = {Module.concat([d.module]), d.name, Definition.callable_arities(d)}
+    target = {d.module, d.name, Definition.callable_arities(d)}
 
     fc_opts =
       case Keyword.get(opts, :files) do
