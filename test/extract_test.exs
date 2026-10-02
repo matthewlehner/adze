@@ -1539,4 +1539,31 @@ defmodule AdzeExtractTest do
       assert r.target_content =~ "MyApp.S.entry(:x)"
     end
   end
+
+  describe "modules find-callers can't search" do
+    test "extracting from a non-alias module is refused, not done with callers left broken" do
+      files = %{
+        "lib/m.ex" => """
+        defmodule :my_erl_mod do
+          def helper(a), do: a
+          def other, do: helper(1)
+        end
+        """,
+        "lib/c.ex" => """
+        defmodule C do
+          def go, do: :my_erl_mod.helper(1)
+        end
+        """
+      }
+
+      # Going ahead would leave `:my_erl_mod.helper(1)` in lib/c.ex
+      # pointing at a removed function: callers are found by module name.
+      assert {:error, {:unsupported_module, ":my_erl_mod"}} =
+               Extract.extract_file("lib/m.ex",
+                 definition: "helper/1",
+                 module: "My.Helper",
+                 files: files
+               )
+    end
+  end
 end

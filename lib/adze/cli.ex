@@ -201,10 +201,7 @@ defmodule Adze.CLI do
         die(format_externals_error(refs))
 
       {:error, {:unsupported_module, module}} ->
-        die(
-          "cannot check callers of definitions in `defmodule #{module}`: " <>
-            "find-callers only searches Foo.Bar-style module names"
-        )
+        die(unsupported_module_message(module))
 
       {:error, {:ambiguous_attribute, _} = err} ->
         die("ambiguous attribute attachment: #{inspect(err)}")
@@ -212,6 +209,11 @@ defmodule Adze.CLI do
       {:error, reason} ->
         die("extract-private failed: #{inspect(reason)}")
     end
+  end
+
+  defp unsupported_module_message(module) do
+    "cannot check callers of definitions in `defmodule #{module}`: " <>
+      "find-callers only searches Foo.Bar-style module names"
   end
 
   defp format_externals_error(refs) do
@@ -368,6 +370,9 @@ defmodule Adze.CLI do
 
       {:error, {:bad_module_name, name}} ->
         die("bad --module value: #{name} (expected dot-separated CamelCase, e.g. MyApp.Helpers)")
+
+      {:error, {:unsupported_module, module}} ->
+        die(unsupported_module_message(module))
 
       {:error, {:not_found, key}} ->
         die("definition not found in #{args.file}: #{inspect(key)}")

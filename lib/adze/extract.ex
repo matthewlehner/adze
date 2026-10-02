@@ -132,6 +132,7 @@ defmodule Adze.Extract do
          {:ok, all_defs} <- Definition.list(source, opts),
          def_key = Definition.resolve_key(parsed_key, all_defs),
          {:ok, source_module} <- resolve_source_module(all_defs, def_key, opts),
+         :ok <- ensure_supported_source_module(source_module),
          {:ok, ast} <- parse(source),
          {:ok, body_info} <- collect_body_info(ast, source_module),
          {:ok, closure_defs} <- compute_closure(source, def_key, source_module, all_defs, opts) do
@@ -496,6 +497,16 @@ defmodule Adze.Extract do
   end
 
   # --- source-module resolution ------------------------------------------
+
+  # Callers are found and rewritten by module name, which only works for a
+  # `Foo.Bar` module. For anything else (`defmodule :erl_mod`, a dynamic
+  # name) callers in other files would be left calling a removed
+  # function, and the in-file rewrite can't name the source module either.
+  defp ensure_supported_source_module(module) do
+    if Adze.Names.valid_module_name?(module),
+      do: :ok,
+      else: {:error, {:unsupported_module, module}}
+  end
 
   defp resolve_source_module(all_defs, {name, arity}, opts) do
     matches =
