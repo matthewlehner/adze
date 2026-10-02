@@ -396,6 +396,15 @@ defmodule Adze.CLI do
             "then re-run extract."
         )
 
+      {:error, {:private_macro_referenced, %{definitions: defs, source: mod}}} ->
+        names = Enum.map_join(defs, ", ", fn {kind, n, a} -> "#{kind} #{n}/#{a}" end)
+
+        die(
+          "extracted code uses private macros/guards that stay in #{mod}: #{names}.\n" <>
+            "Make them public (and add `require #{mod}` to the target) or move " <>
+            "them first, then re-run extract."
+        )
+
       {:error, {:ambiguous_attribute, _} = err} ->
         die("ambiguous attribute attachment: #{inspect(err)}")
 

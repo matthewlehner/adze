@@ -70,6 +70,14 @@ defmodule Adze.Extract do
       reasons rather than as API. Closure helpers stay private — by
       construction all their callers move with them. Promotions are
       reported in `promoted` as `[{name, arity}]`.
+    * **Shared private helpers are promoted in the source.** A `defp`
+      the closure calls but that also has callers staying behind can't
+      move, and the target can only reach it as `Source.helper(...)` if
+      it's public. It's flipped to `def` + `@doc false` in the source and
+      reported in `promoted_in_source`. Shared `defmacrop` / `defguardp`
+      helpers are refused with `{:error, {:private_macro_referenced,
+      %{definitions: [{kind, name, arity}], source: module}}}` — they'd
+      also need a `require` in the target.
 
   ## `extract!` writes both files
 
@@ -118,7 +126,8 @@ defmodule Adze.Extract do
           call_site_arities: %{{atom(), non_neg_integer()} => [non_neg_integer()]},
           caller_diffs: %{Path.t() => String.t()},
           dropped_directives: [dropped_directive()],
-          promoted: [{atom(), non_neg_integer()}]
+          promoted: [{atom(), non_neg_integer()}],
+          promoted_in_source: [{atom(), non_neg_integer()}]
         }
 
   @spec extract(String.t(), opts()) :: {:ok, result()} | {:error, term()}
@@ -135,7 +144,9 @@ defmodule Adze.Extract do
          :ok <- ensure_supported_source_module(source_module),
          {:ok, ast} <- parse(source),
          {:ok, body_info} <- collect_body_info(ast, source_module),
-         {:ok, closure_defs} <- compute_closure(source, def_key, source_module, all_defs, opts) do
+         {:ok, closure_defs} <- compute_closure(source, def_key, source_module, all_defs, opts),
+         {:ok, shared_privates} <-
+           shared_private_helpers(source, closure_defs, source_module, all_defs, opts) do
       {kept_directives, dropped_directives_raw} =
         filter_directives(body_info.directives, closure_defs)
 
@@ -151,6 +162,7 @@ defmodule Adze.Extract do
       promoted_keys = MapSet.new(promoted)
 
       closure_keys_all = MapSet.new(closure_defs, &{&1.name, &1.arity})
+      promoted_in_source = Enum.map(shared_privates, &{&1.name, &1.arity})
 
       # Default arguments make a def callable at several arities, so a
       # bare `entry(:x)` still refers to `entry/2` and must be qualified.
@@ -186,6 +198,7 @@ defmodule Adze.Extract do
             needs_alias?,
             all_defs,
             source_module,
+            MapSet.new(promoted_in_source),
             formatter_opts
           )
 
@@ -217,7 +230,8 @@ defmodule Adze.Extract do
            call_site_arities: call_site_arities,
            caller_diffs: %{},
            dropped_directives: dropped_directives,
-           promoted: promoted
+           promoted: promoted,
+           promoted_in_source: promoted_in_source
          }}
       catch
         {:typep_referenced, info} -> {:error, {:typep_referenced, info}}
@@ -344,33 +358,77 @@ defmodule Adze.Extract do
     Enum.map_reduce(closure_defs, [], fn
       %Definition{name: ^name, arity: ^arity, visibility: :private, kind: kind} = d, acc
       when is_map_key(@promotions, kind) ->
-        new_kind = Map.fetch!(@promotions, kind)
-
-        nodes =
-          Enum.map(d.nodes, fn
-            {^kind, m, args} -> {new_kind, m, args}
-            other -> other
-          end)
-
-        clauses =
-          Enum.map(d.parts.clauses, fn
-            {^kind, m, args} -> {new_kind, m, args}
-            other -> other
-          end)
-
-        promoted = %{
-          d
-          | kind: new_kind,
-            visibility: :public,
-            nodes: nodes,
-            parts: %{d.parts | clauses: clauses}
-        }
-
-        {promoted, [{name, arity} | acc]}
+        {promote_definition(d), [{name, arity} | acc]}
 
       d, acc ->
         {d, acc}
     end)
+  end
+
+  # Flip a private definition's AST kind (`defp` → `def`, etc.).
+  defp promote_definition(%Definition{kind: kind} = d) do
+    new_kind = Map.fetch!(@promotions, kind)
+
+    flip = fn
+      {^kind, m, args} -> {new_kind, m, args}
+      other -> other
+    end
+
+    %{
+      d
+      | kind: new_kind,
+        visibility: :public,
+        nodes: Enum.map(d.nodes, flip),
+        parts: %{d.parts | clauses: Enum.map(d.parts.clauses, flip)}
+    }
+  end
+
+  # Private definitions that stay in the source module but are called
+  # from the extracted closure. The target reaches them as
+  # `SourceModule.name(...)`, which only compiles if they're public.
+  #
+  # Plain `defp` helpers are promoted in place (`def` + `@doc false`),
+  # mirroring how a private target is promoted. Private macros and
+  # guards are refused instead: making them public isn't enough — the
+  # target would also need `require SourceModule`, and a guard may be
+  # used inside a `when` clause. Leave that decision to the user.
+  defp shared_private_helpers(source, closure_defs, source_module, all_defs, opts) do
+    closure_keys = MapSet.new(closure_defs, &{&1.name, &1.arity})
+
+    with {:ok, %{modules: modules}} <- Deps.deps(source, opts),
+         %{defs: dep_defs} <- Enum.find(modules, &(&1.name == source_module)) do
+      called =
+        dep_defs
+        |> Enum.filter(&MapSet.member?(closure_keys, {&1.name, &1.arity}))
+        |> Enum.flat_map(& &1.calls)
+        |> MapSet.new()
+
+      shared =
+        all_defs
+        |> Enum.filter(fn d ->
+          d.module == source_module and d.visibility == :private and
+            not MapSet.member?(closure_keys, {d.name, d.arity}) and
+            MapSet.member?(called, {d.name, d.arity})
+        end)
+        |> Enum.sort_by(&def_sort_key/1)
+
+      case Enum.reject(shared, &(&1.kind == :defp)) do
+        [] ->
+          {:ok, shared}
+
+        unpromotable ->
+          {:error,
+           {:private_macro_referenced,
+            %{
+              definitions: Enum.map(unpromotable, &{&1.kind, &1.name, &1.arity}),
+              source: source_module
+            }}}
+      end
+    else
+      # Couldn't analyze — fall through without promotion; the compiler
+      # will still flag any private remote call.
+      _ -> {:ok, []}
+    end
   end
 
   # The slice-render path copies source text verbatim, so the private
@@ -422,7 +480,14 @@ defmodule Adze.Extract do
           _ -> ""
         end
 
-      indent <> "@doc false\n" <> text
+      # Insert below any leading comment lines so the comment stays
+      # attached to the `@doc` / def it describes.
+      {comments, rest} =
+        text
+        |> String.split("\n")
+        |> Enum.split_while(&String.starts_with?(String.trim_leading(&1), "#"))
+
+      Enum.join(comments ++ [indent <> "@doc false" | rest], "\n")
     end
   end
 
@@ -971,6 +1036,7 @@ defmodule Adze.Extract do
          needs_alias?,
          all_defs,
          source_module,
+         promote_keys,
          formatter_opts
        ) do
     lines = String.split(source, "\n")
@@ -990,7 +1056,15 @@ defmodule Adze.Extract do
     cut_ops = build_cut_ops(closure_defs, lines)
 
     rewrite_ops =
-      build_rewrite_ops(all_defs, source_module, closure_keys, rewrite_keys, target_alias_atom)
+      build_rewrite_ops(
+        all_defs,
+        source_module,
+        closure_keys,
+        rewrite_keys,
+        target_alias_atom,
+        promote_keys,
+        lines
+      )
 
     alias_ops =
       if needs_alias?, do: [build_alias_op(body_info, target_module)], else: []
@@ -1063,19 +1137,45 @@ defmodule Adze.Extract do
     |> MapSet.new()
   end
 
-  defp build_rewrite_ops(all_defs, source_module, closure_keys, rewrite_keys, target_alias_atom) do
+  # Surviving defs in `promote_keys` (private helpers the target now
+  # calls remotely) are also flipped to public + `@doc false` here, so a
+  # def that is both rewritten and promoted gets a single line op.
+  defp build_rewrite_ops(
+         all_defs,
+         source_module,
+         closure_keys,
+         rewrite_keys,
+         target_alias_atom,
+         promote_keys,
+         lines
+       ) do
     all_defs
     |> Enum.filter(&(&1.module == source_module))
     |> Enum.reject(fn d -> MapSet.member?(closure_keys, {d.name, d.arity}) end)
     |> Enum.flat_map(fn d ->
-      case rewrite_def(d, rewrite_keys, target_alias_atom) do
+      promote? = MapSet.member?(promote_keys, {d.name, d.arity})
+      d_out = if promote?, do: promote_definition(d), else: d
+
+      text =
+        case rewrite_def(d_out, rewrite_keys, target_alias_atom) do
+          nil when promote? ->
+            d.range |> slice_range_text(lines) |> flip_private_keyword_in_text(d)
+
+          nil ->
+            nil
+
+          new_nodes ->
+            Enum.map_join(new_nodes, "\n", &render_node/1)
+        end
+
+      case text do
         nil ->
           []
 
-        new_nodes ->
+        text ->
+          text = if promote?, do: prepend_doc_false(text, d), else: text
           s = Keyword.fetch!(d.range.start, :line)
           e = Keyword.fetch!(d.range.end, :line)
-          text = Enum.map_join(new_nodes, "\n", &render_node/1)
           [{s, e, text}]
       end
     end)

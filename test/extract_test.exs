@@ -980,6 +980,106 @@ defmodule AdzeExtractTest do
       assert {:ok, _} = Code.string_to_quoted(result.target_content)
     end
 
+    test "promotes a private helper shared with surviving source code" do
+      # `shared/1` is called by both the extracted `go/1` and the
+      # surviving `stay/1`, so it stays in the source. The target calls
+      # it remotely, which only compiles if it's public.
+      source = """
+      defmodule SharedPriv do
+        def go(x), do: shared(x) + 1
+        def stay(x), do: shared(x) * 10
+
+        # doubles
+        defp shared(x), do: x * 2
+      end
+      """
+
+      {:ok, result} =
+        Extract.extract(source,
+          definition: "go/1",
+          module: "SharedPriv.Go",
+          path: "/tmp/__nonexistent_target__.ex"
+        )
+
+      assert result.promoted_in_source == [{:shared, 1}]
+      assert result.target_content =~ "SharedPriv.shared(x)"
+      assert result.new_source =~ ~r/@doc false\n\s+def shared\(x\)/
+      refute result.new_source =~ "defp shared"
+      assert result.new_source =~ "# doubles"
+
+      mods = compile_and_cleanup([result.new_source, result.target_content])
+      assert SharedPriv.Go in mods
+      assert apply(SharedPriv.Go, :go, [1]) == 3
+      assert apply(SharedPriv, :stay, [1]) == 20
+    end
+
+    test "promotes a shared helper that is also rewritten, and keeps an existing @doc" do
+      # `shared/1` calls the extracted public `go/1`, so it's both
+      # rewritten (go → Go.go) and promoted in a single edit.
+      source = """
+      defmodule SharedBoth do
+        def go(0), do: 0
+        def go(x), do: shared(x - 1)
+        def stay(x), do: shared(x)
+
+        @doc "kept"
+        defp shared(x), do: go(x) + 1
+      end
+      """
+
+      {:ok, result} =
+        Extract.extract(source,
+          definition: "go/1",
+          module: "SharedBoth.Go",
+          path: "/tmp/__nonexistent_target__.ex"
+        )
+
+      assert result.promoted_in_source == [{:shared, 1}]
+      assert result.new_source =~ "Go.go(x)"
+      assert result.new_source =~ ~r/def shared\(x\)/
+      refute result.new_source =~ "@doc false"
+
+      assert {:ok, _} = Code.string_to_quoted(result.new_source)
+    end
+
+    test "does not promote private helpers that move with the closure" do
+      source = """
+      defmodule NoShared do
+        def go(x), do: only(x)
+        defp only(x), do: x
+      end
+      """
+
+      {:ok, result} =
+        Extract.extract(source,
+          definition: "go/1",
+          module: "NoShared.Go",
+          path: "/tmp/__nonexistent_target__.ex"
+        )
+
+      assert result.promoted_in_source == []
+      assert result.target_content =~ "defp only"
+    end
+
+    test "refuses when the closure uses a shared private macro" do
+      source = """
+      defmodule SharedMacro do
+        defmacrop twice(x), do: quote(do: unquote(x) * 2)
+        def go(x), do: twice(x)
+        def stay(x), do: twice(x)
+      end
+      """
+
+      assert {:error,
+              {:private_macro_referenced,
+               %{definitions: [{:defmacrop, :twice, 1}], source: "SharedMacro"}}} =
+               Extract.extract(source,
+                 definition: "go/1",
+                 module: "SharedMacro.Go",
+                 path: "/tmp/__nonexistent_target__.ex"
+               )
+    end
+
     test "rewrites pipe to a source-staying function" do
       source = """
       defmodule MyApp.Source do
