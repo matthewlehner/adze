@@ -370,6 +370,172 @@ defmodule Adze.ExtractPrivateTest do
     end
   end
 
+  describe "extract_private/2 — behaviour callbacks" do
+    defp ep(source, definition, extra \\ []) do
+      ExtractPrivate.extract_private(
+        source,
+        [definition: definition, path: "lib/cb.ex", files: %{"lib/cb.ex" => source}] ++ extra
+      )
+    end
+
+    test "@impl true is refused, even with force" do
+      source = """
+      defmodule MyApp.Worker do
+        @behaviour GenServer
+
+        @impl true
+        def init(arg), do: {:ok, arg}
+      end
+      """
+
+      for extra <- [[], [force: true]] do
+        assert {:error,
+                {:behaviour_callback,
+                 %{definition: {:init, 1}, module: "MyApp.Worker", reason: {:impl, "true"}}}} =
+                 ep(source, "init/1", extra)
+      end
+    end
+
+    test "@impl SomeBehaviour is refused" do
+      source = """
+      defmodule MyApp.Worker do
+        @impl GenServer
+        def init(arg), do: {:ok, arg}
+      end
+      """
+
+      assert {:error, {:behaviour_callback, %{reason: {:impl, "GenServer"}}}} =
+               ep(source, "init/1")
+    end
+
+    test "a callback of a loadable @behaviour is refused without @impl" do
+      source = """
+      defmodule MyApp.Worker do
+        @behaviour GenServer
+        def init(arg), do: {:ok, arg}
+        def helper(x), do: x
+      end
+      """
+
+      assert {:error, {:behaviour_callback, %{reason: {:behaviour, "GenServer"}}}} =
+               ep(source, "init/1", force: true)
+
+      # A non-callback in a module whose behaviours are all resolvable
+      # is fine without --force.
+      assert {:ok, %{to_kind: :defp}} = ep(source, "helper/1")
+    end
+
+    test "a callback of a `use`d behaviour is refused" do
+      source = """
+      defmodule MyApp.Worker do
+        use GenServer
+        def handle_call(msg, _from, state), do: {:reply, msg, state}
+      end
+      """
+
+      assert {:error, {:behaviour_callback, %{reason: {:behaviour, "GenServer"}}}} =
+               ep(source, "handle_call/3", force: true)
+    end
+
+    test "a non-callback in a module that only `use`s loadable behaviours is allowed" do
+      source = """
+      defmodule MyApp.Worker do
+        use GenServer
+        def init(arg), do: {:ok, helper(arg)}
+        def helper(x), do: x
+      end
+      """
+
+      assert {:ok, %{to_kind: :defp}} = ep(source, "helper/1")
+    end
+
+    test "a module with `use` is refused as a possible callback unless forced" do
+      # Phoenix-style: actions are dispatched dynamically and `use`
+      # doesn't name a behaviour we can check.
+      source = """
+      defmodule MyAppWeb.PageController do
+        use MyAppWeb, :controller
+        def index(conn, _params), do: conn
+      end
+      """
+
+      assert {:error,
+              {:possible_callback,
+               %{
+                 definition: {:index, 2},
+                 module: "MyAppWeb.PageController",
+                 uses: ["MyAppWeb"],
+                 behaviours: []
+               }}} = ep(source, "index/2")
+
+      assert {:ok, %{to_kind: :defp}} = ep(source, "index/2", force: true)
+    end
+
+    test "an unloadable @behaviour is refused as a possible callback unless forced" do
+      source = """
+      defmodule MyApp.Impl do
+        @behaviour MyApp.NotCompiledBehaviour
+        def run(x), do: x
+      end
+      """
+
+      assert {:error,
+              {:possible_callback, %{uses: [], behaviours: ["MyApp.NotCompiledBehaviour"]}}} =
+               ep(source, "run/1")
+
+      assert {:ok, _} = ep(source, "run/1", force: true)
+    end
+
+    test "@impl false doesn't count as a callback" do
+      source = """
+      defmodule MyApp.Plain do
+        @impl false
+        def helper(x), do: x
+      end
+      """
+
+      assert {:ok, %{to_kind: :defp}} = ep(source, "helper/1")
+    end
+
+    test "use / @behaviour in a sibling or nested module doesn't affect this module" do
+      source = """
+      defmodule MyApp.Outer do
+        def helper(x), do: x
+
+        defmodule Inner do
+          use GenServer
+          def init(a), do: {:ok, a}
+        end
+      end
+      """
+
+      assert {:ok, %{to_kind: :defp}} = ep(source, "helper/1", from_module: "MyApp.Outer")
+    end
+
+    test "macro callbacks are recognised" do
+      source = """
+      defmodule MyApp.Mac do
+        @behaviour MyApp.Mac.Beh
+        defmacro gen(x), do: x
+      end
+      """
+
+      Code.compile_string("""
+      defmodule MyApp.Mac.Beh do
+        @macrocallback gen(term) :: Macro.t()
+      end
+      """)
+
+      on_exit(fn ->
+        :code.purge(MyApp.Mac.Beh)
+        :code.delete(MyApp.Mac.Beh)
+      end)
+
+      assert {:error, {:behaviour_callback, %{reason: {:behaviour, "MyApp.Mac.Beh"}}}} =
+               ep(source, "gen/1", force: true)
+    end
+  end
+
   describe "extract_private/2 — capture / pipe references" do
     test "external capture &Mod.fun/n blocks the flip" do
       source = """

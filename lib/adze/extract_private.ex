@@ -13,13 +13,30 @@ defmodule Adze.ExtractPrivate do
     * `defdelegate` has no private form — returns
       `{:error, :cannot_be_private}`.
     * Multi-clause defs flip every clause line.
-    * Attached `@spec` / `@doc` / `@impl` / etc. are left in place. A
-      `@spec` on a `defp` is allowed by the compiler; an `@impl` on a
-      private callable is rejected, but flipping a function with `@impl`
-      to private is almost certainly wrong anyway — `find-callers`
-      would normally surface the behaviour-callback callers and refuse
-      the flip. We let the compiler complain if the user forces it via
-      a future override.
+    * Attached `@spec` / `@doc` / etc. are left in place. A `@spec` on
+      a `defp` is allowed by the compiler.
+
+  ## Behaviour callbacks and dynamic dispatch
+
+  Callbacks are invoked dynamically (`GenServer` calls `mod.init/1`,
+  Phoenix calls controller actions and LiveView callbacks via
+  `apply/3`), so they never show up in `find-callers` and would look
+  caller-free. Two guards cover this:
+
+    * **Known callbacks are always refused** with
+      `{:error, {:behaviour_callback, %{definition:, module:, reason:}}}`.
+      `reason` is `{:impl, value}` when the definition carries
+      `@impl true` / `@impl SomeBehaviour` (`@impl false` doesn't
+      count), or `{:behaviour, "Mod"}` when a `@behaviour` / `use`d
+      module that can be loaded lists the function among its callbacks.
+    * **Possible callbacks are refused unless `force: true`** with
+      `{:error, {:possible_callback, %{definition:, module:, uses:,
+      behaviours:}}}`. That's any module with a `use` or `@behaviour`
+      whose target can't be loaded as a behaviour to check its callback
+      list — e.g. `use MyAppWeb, :controller`, which is how
+      dynamically-dispatched modules like Phoenix controllers are set
+      up. `use GenServer` alone doesn't trigger it: its callbacks are
+      known, so other functions in the module are judged normally.
 
   ## Safety
 
@@ -78,7 +95,8 @@ defmodule Adze.ExtractPrivate do
           path: Path.t(),
           mix_root: Path.t(),
           files: %{Path.t() => String.t()},
-          include_attrs: [atom()]
+          include_attrs: [atom()],
+          force: boolean()
         ]
 
   @type external_ref :: %{
@@ -108,6 +126,7 @@ defmodule Adze.ExtractPrivate do
          {:ok, to_kind} <- flip_kind(definition.kind),
          :ok <- ensure_public(definition),
          :ok <- ensure_searchable_module(definition),
+         :ok <- ensure_not_callback(source, definition, opts),
          {:ok, fc_result} <- run_find_callers(definition, opts),
          {:ok, externals} <- classify_external(fc_result, path, definition),
          :ok <- check_no_externals(externals) do
@@ -204,6 +223,136 @@ defmodule Adze.ExtractPrivate do
       do: :ok,
       else: {:error, {:unsupported_module, module}}
   end
+
+  # --- behaviour callbacks ------------------------------------------------
+
+  defp ensure_not_callback(source, %Definition{} = d, opts) do
+    {uses, behaviours} = module_behaviour_decls(source, d.module)
+    keys = Enum.map(Definition.callable_arities(d), &{d.name, &1})
+    info = %{definition: {d.name, d.arity}, module: d.module}
+
+    # `use X` usually means X is (or injects) the behaviour, so check it
+    # alongside the explicit `@behaviour`s. Loading may fail for project
+    # modules that aren't compiled/loaded; those stay "unresolved".
+    candidates = Enum.uniq(behaviours ++ uses)
+    {callbacks, unresolved} = resolve_callbacks(candidates)
+    unresolved_uses = Enum.filter(uses, &(&1 in unresolved))
+    unresolved_behaviours = Enum.filter(behaviours, &(&1 in unresolved))
+
+    cond do
+      impl = impl_value(d) ->
+        {:error, {:behaviour_callback, Map.put(info, :reason, {:impl, impl})}}
+
+      behaviour = Enum.find_value(keys, &Map.get(callbacks, &1)) ->
+        {:error, {:behaviour_callback, Map.put(info, :reason, {:behaviour, behaviour})}}
+
+      Keyword.get(opts, :force, false) ->
+        :ok
+
+      unresolved_uses != [] or unresolved_behaviours != [] ->
+        {:error,
+         {:possible_callback,
+          Map.merge(info, %{uses: unresolved_uses, behaviours: unresolved_behaviours})}}
+
+      true ->
+        :ok
+    end
+  end
+
+  # `@impl true` / `@impl Mod` → the source text of the value; `@impl
+  # false` (explicitly not a callback) and no `@impl` → nil.
+  defp impl_value(%Definition{parts: %{attributes: attrs}}) do
+    Enum.find_value(attrs, fn
+      {:impl, {:@, _, [{:impl, _, [value]}]}} ->
+        case unwrap_literal(value) do
+          false -> nil
+          v -> Macro.to_string(v)
+        end
+
+      _ ->
+        nil
+    end)
+  end
+
+  defp unwrap_literal({:__block__, _, [v]}) when is_atom(v), do: v
+  defp unwrap_literal(v), do: v
+
+  # `%{{name, arity} => "Behaviour"}` for every loadable behaviour, plus
+  # the list of candidates that couldn't be loaded / aren't behaviours.
+  defp resolve_callbacks(modules) do
+    Enum.reduce(modules, {%{}, []}, fn name, {cbs, unresolved} ->
+      mod = name_to_module(name)
+
+      if Code.ensure_loaded?(mod) and function_exported?(mod, :behaviour_info, 1) do
+        new =
+          mod.behaviour_info(:callbacks)
+          |> Enum.flat_map(&callback_keys/1)
+          |> Map.new(&{&1, name})
+
+        {Map.merge(new, cbs), unresolved}
+      else
+        {cbs, [name | unresolved]}
+      end
+    end)
+  end
+
+  # Macro callbacks are reported as `:"MACRO-name"` with the hidden
+  # caller-env argument counted in the arity.
+  defp callback_keys({name, arity}) do
+    case Atom.to_string(name) do
+      "MACRO-" <> macro -> [{String.to_atom(macro), arity - 1}]
+      _ -> [{name, arity}]
+    end
+  end
+
+  defp name_to_module(":" <> erlang), do: String.to_atom(erlang)
+  defp name_to_module(name), do: Module.concat([name])
+
+  # `use` targets and `@behaviour` values declared directly in the body
+  # of `module` (nested modules' declarations don't count), as strings.
+  defp module_behaviour_decls(source, module) do
+    with {:ok, ast} <- Sourceror.parse_string(source),
+         body when not is_nil(body) <- find_module_body(ast, "", module) do
+      body
+      |> body_nodes()
+      |> Enum.reduce({[], []}, fn
+        {:use, _, [target | _]}, {uses, behs} ->
+          {[module_name(target, module) | uses], behs}
+
+        {:@, _, [{:behaviour, _, [target]}]}, {uses, behs} ->
+          {uses, [module_name(target, module) | behs]}
+
+        _, acc ->
+          acc
+      end)
+      |> then(fn {uses, behs} -> {Enum.reverse(uses), Enum.reverse(behs)} end)
+    else
+      _ -> {[], []}
+    end
+  end
+
+  defp module_name({:__block__, _, [atom]}, _current) when is_atom(atom),
+    do: ":" <> Atom.to_string(atom)
+
+  defp module_name(ast, current), do: Adze.Names.module_ref(ast, current)
+
+  defp find_module_body({:__block__, _, exprs}, prefix, target),
+    do: Enum.find_value(exprs, &find_module_body(&1, prefix, target))
+
+  defp find_module_body({:defmodule, _, [name_ast, [{_do, body}]]}, prefix, target) do
+    name = Adze.Names.defmodule_name(name_ast, prefix)
+
+    cond do
+      name == target -> body
+      true -> body |> body_nodes() |> Enum.find_value(&find_module_body(&1, name, target))
+    end
+  end
+
+  defp find_module_body(_, _, _), do: nil
+
+  defp body_nodes({:__block__, _, exprs}), do: exprs
+  defp body_nodes(nil), do: []
+  defp body_nodes(single), do: [single]
 
   defp flip_kind(:def), do: {:ok, :defp}
   defp flip_kind(:defmacro), do: {:ok, :defmacrop}

@@ -154,7 +154,7 @@ defmodule Adze.CLI do
 
   defp run_extract_private(args, opts) do
     ep_opts =
-      [definition: args.definition]
+      [definition: args.definition, force: args.force]
       |> maybe_put_opt(:from_module, args.from_module)
       |> maybe_put_opt(:mix_root, args.mix_root)
 
@@ -199,6 +199,32 @@ defmodule Adze.CLI do
 
       {:error, {:external_callers, refs}} ->
         die(format_externals_error(refs))
+
+      {:error, {:behaviour_callback, %{definition: {n, a}, module: mod, reason: reason}}} ->
+        why =
+          case reason do
+            {:impl, value} -> "it is marked `@impl #{value}`"
+            {:behaviour, b} -> "#{b} declares it as a callback"
+          end
+
+        die(
+          "extract-private refused — #{mod}.#{n}/#{a} is a behaviour callback " <>
+            "(#{why}).\nCallbacks are invoked dynamically and must stay public."
+        )
+
+      {:error,
+       {:possible_callback, %{definition: {n, a}, module: mod, uses: uses, behaviours: behs}}} ->
+        decls =
+          Enum.map(uses, &"use #{&1}") ++ Enum.map(behs, &"@behaviour #{&1}")
+
+        die(
+          "extract-private refused — #{mod}.#{n}/#{a} may be called dynamically: " <>
+            "the module declares #{Enum.join(decls, ", ")}, which adze can't " <>
+            "load to check for callbacks.\n" <>
+            "Callbacks and dispatched functions (GenServer callbacks, Phoenix " <>
+            "actions, LiveView callbacks) have no visible callers.\n" <>
+            "Pass --force if you've verified #{n}/#{a} isn't one of them."
+        )
 
       {:error, {:unsupported_module, module}} ->
         die(unsupported_module_message(module))
@@ -639,7 +665,10 @@ defmodule Adze.CLI do
       --force              Skip the post-check guard on rename! and
                            write even when surviving short refs are
                            detected. Use when you've verified the
-                           refs are false positives.
+                           refs are false positives. For
+                           extract-private, allow the flip in a module
+                           whose `use` / `@behaviour` can't be checked
+                           (known callbacks are still refused).
 
     EXAMPLES
       adze ls --file lib/my_app/router.ex

@@ -261,6 +261,14 @@ pipe variants, and `&Mod.fun/n` captures — including alias resolution. It
 - Dynamic dispatch (`apply/3`, `Kernel.apply/3`)
 - String-literal module references (`"Elixir.MyApp.Foo"`)
 
+Because callbacks and dynamically dispatched functions have no visible
+callers, `extract-private` always refuses `@impl` definitions and callbacks
+of a loadable `@behaviour` / `use`d behaviour, and refuses anything in a
+module whose `use` / `@behaviour` target it can't load as a behaviour
+(e.g. `use MyAppWeb, :controller`) unless you pass `--force`.
+Functions reached via `mod.fun()` / `apply/3` from elsewhere are still
+invisible to it.
+
 When in doubt, run `mix compile --warnings-as-errors` after any write op.
 The compiler catches what adze can't.
 
