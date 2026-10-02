@@ -1050,8 +1050,7 @@ defmodule Adze.Extract do
       |> Enum.filter(&(&1.visibility == :public))
       |> callable_keys()
 
-    target_alias_atom =
-      target_module |> String.split(".") |> List.last() |> String.to_atom()
+    {target_parts, add_alias?} = target_reference(body_info, target_module)
 
     cut_ops = build_cut_ops(closure_defs, lines)
 
@@ -1061,13 +1060,15 @@ defmodule Adze.Extract do
         source_module,
         closure_keys,
         rewrite_keys,
-        target_alias_atom,
+        target_parts,
         promote_keys,
         lines
       )
 
     alias_ops =
-      if needs_alias?, do: [build_alias_op(body_info, target_module)], else: []
+      if needs_alias? and add_alias?,
+        do: [build_alias_op(body_info, target_module)],
+        else: []
 
     ops =
       (cut_ops ++ rewrite_ops ++ alias_ops)
@@ -1112,6 +1113,88 @@ defmodule Adze.Extract do
     end)
   end
 
+  # How surviving source code should spell the target module, and
+  # whether an `alias TargetModule` must be inserted for that spelling.
+  #
+  #   * an existing `alias Target.Module` already binds the short name →
+  #     reuse it, insert nothing;
+  #   * the short name (last segment) is free in the source module →
+  #     `[:Short]` + insert the alias;
+  #   * the short name is already taken — another alias binds it
+  #     (`alias Other.Helpers`, `as: Helpers`), a nested `defmodule`
+  #     auto-aliases it, or code references a top-level module of that
+  #     name → fully-qualify every reference and insert no alias.
+  #     A second `alias X.Helpers` would silently re-point the existing
+  #     `Helpers.go(x)` calls at the new module.
+  #
+  # The fully-qualified form gets an `Elixir.` prefix when its first
+  # segment is itself shadowed by an alias in the source module.
+  defp target_reference(body_info, target_module) do
+    full = target_module |> String.split(".") |> Enum.map(&String.to_atom/1)
+    short = List.last(full)
+    {bindings, existing_targets} = alias_info(body_info.body_nodes)
+
+    cond do
+      MapSet.member?(existing_targets, full) ->
+        {[short], false}
+
+      not MapSet.member?(bindings, short) and
+          not MapSet.member?(alias_heads(body_info.body_nodes), short) ->
+        {[short], true}
+
+      MapSet.member?(bindings, hd(full)) ->
+        {[:"Elixir" | full], false}
+
+      true ->
+        {full, false}
+    end
+  end
+
+  # Names bound by `alias` directives (anywhere in the module body,
+  # including function-local aliases) and nested `defmodule`s, plus the
+  # full module paths that are aliased under their own last segment.
+  defp alias_info(body_nodes) do
+    Enum.reduce(body_nodes, {MapSet.new(), MapSet.new()}, fn node, acc ->
+      {_, acc} =
+        Macro.prewalk(node, acc, fn
+          {:alias, _, [{:__aliases__, _, parts} | rest] = args} = n, {b, t} ->
+            bound = alias_bindings(args)
+
+            t =
+              if bound == [List.last(parts)] and find_as_value(rest) == nil,
+                do: MapSet.put(t, parts),
+                else: t
+
+            {n, {MapSet.union(b, MapSet.new(bound)), t}}
+
+          {:alias, _, args} = n, {b, t} when is_list(args) ->
+            {n, {MapSet.union(b, MapSet.new(alias_bindings(args))), t}}
+
+          {:defmodule, _, [{:__aliases__, _, [first | _]} | _]} = n, {b, t} ->
+            {n, {MapSet.put(b, first), t}}
+
+          n, acc ->
+            {n, acc}
+        end)
+
+      acc
+    end)
+  end
+
+  # First segment of every alias reference (`Helpers` in `Helpers.go()`
+  # or `%Helpers{}`) — a module name the code relies on resolving.
+  defp alias_heads(body_nodes) do
+    Enum.reduce(body_nodes, MapSet.new(), fn node, acc ->
+      {_, acc} =
+        Macro.prewalk(node, acc, fn
+          {:__aliases__, _, [first | _]} = n, a when is_atom(first) -> {n, MapSet.put(a, first)}
+          n, a -> {n, a}
+        end)
+
+      acc
+    end)
+  end
+
   defp build_alias_op(body_info, target_module) do
     anchor =
       case last_header_line(body_info) do
@@ -1145,7 +1228,7 @@ defmodule Adze.Extract do
          source_module,
          closure_keys,
          rewrite_keys,
-         target_alias_atom,
+         target_parts,
          promote_keys,
          lines
        ) do
@@ -1157,7 +1240,7 @@ defmodule Adze.Extract do
       d_out = if promote?, do: promote_definition(d), else: d
 
       text =
-        case rewrite_def(d_out, rewrite_keys, target_alias_atom) do
+        case rewrite_def(d_out, rewrite_keys, target_parts) do
           nil when promote? ->
             d.range |> slice_range_text(lines) |> flip_private_keyword_in_text(d)
 
@@ -1183,11 +1266,11 @@ defmodule Adze.Extract do
 
   # Walk each AST node of a surviving def. Returns the rewritten node
   # list if anything changed, otherwise nil.
-  defp rewrite_def(definition, rewrite_keys, target_alias_atom) do
+  defp rewrite_def(definition, rewrite_keys, target_parts) do
     {new_nodes, changed?} =
       Enum.map_reduce(definition.nodes, false, fn node, acc ->
         {new_node, node_changed?} =
-          rewrite_def_body(node, rewrite_keys, [target_alias_atom])
+          rewrite_def_body(node, rewrite_keys, target_parts)
 
         {new_node, acc or node_changed?}
       end)

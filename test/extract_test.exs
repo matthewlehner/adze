@@ -430,6 +430,154 @@ defmodule AdzeExtractTest do
       assert result.new_source =~
                ~r/alias MyApp\.Existing.*alias MyApp\.AlsoExisting.*alias MyApp\.Shared/s
     end
+
+    defp extract_helpers(source, module \\ "MyApp.Helpers") do
+      {:ok, result} =
+        Extract.extract(source,
+          definition: "shared/1",
+          module: module,
+          path: "/tmp/__nonexistent_target__.ex"
+        )
+
+      result
+    end
+
+    test "fully qualifies instead of aliasing when the short name is already aliased" do
+      source = """
+      defmodule MyApp.Source do
+        alias Other.Helpers
+
+        def shared(x), do: x
+        def caller(x), do: shared(x) + Helpers.go(x)
+      end
+      """
+
+      result = extract_helpers(source)
+
+      refute result.new_source =~ "alias MyApp.Helpers"
+      assert result.new_source =~ "alias Other.Helpers"
+      assert result.new_source =~ "MyApp.Helpers.shared(x) + Helpers.go(x)"
+    end
+
+    test "fully qualifies when an `as:` alias binds the short name" do
+      source = """
+      defmodule MyApp.Source do
+        alias Other.Thing, as: Helpers
+
+        def shared(x), do: x
+        def caller(x), do: shared(x) + Helpers.go(x)
+      end
+      """
+
+      result = extract_helpers(source)
+
+      refute result.new_source =~ "alias MyApp.Helpers"
+      assert result.new_source =~ "MyApp.Helpers.shared(x)"
+    end
+
+    test "fully qualifies when a multi-alias binds the short name" do
+      source = """
+      defmodule MyApp.Source do
+        alias Other.{Helpers, Thing}
+
+        def shared(x), do: x
+        def caller(x), do: shared(x) + Helpers.go(x) + Thing.go(x)
+      end
+      """
+
+      result = extract_helpers(source)
+
+      refute result.new_source =~ "alias MyApp.Helpers"
+      assert result.new_source =~ "MyApp.Helpers.shared(x)"
+    end
+
+    test "fully qualifies when a top-level module of the same name is referenced" do
+      source = """
+      defmodule MyApp.Source do
+        def shared(x), do: x
+        def caller(x), do: shared(x) + Helpers.go(x)
+      end
+      """
+
+      result = extract_helpers(source)
+
+      refute result.new_source =~ "alias MyApp.Helpers"
+      assert result.new_source =~ "MyApp.Helpers.shared(x) + Helpers.go(x)"
+    end
+
+    test "fully qualifies when a function-local alias binds the short name" do
+      source = """
+      defmodule MyApp.Source do
+        def shared(x), do: x
+
+        def caller(x) do
+          alias Other.Helpers
+          shared(x) + Helpers.go(x)
+        end
+      end
+      """
+
+      result = extract_helpers(source)
+
+      refute result.new_source =~ "alias MyApp.Helpers"
+      assert result.new_source =~ "MyApp.Helpers.shared(x)"
+    end
+
+    test "reuses an existing alias of the target module" do
+      source = """
+      defmodule MyApp.Source do
+        alias MyApp.Helpers
+
+        def shared(x), do: x
+        def caller(x), do: shared(x)
+      end
+      """
+
+      result = extract_helpers(source)
+
+      assert length(Regex.scan(~r/alias MyApp\.Helpers/, result.new_source)) == 1
+      assert result.new_source =~ "Helpers.shared(x)"
+      refute result.new_source =~ "MyApp.Helpers.shared"
+    end
+
+    test "prefixes Elixir. when the target's first segment is shadowed too" do
+      source = """
+      defmodule MyApp.Source do
+        alias Other.MyApp
+        alias Other.Helpers
+
+        def shared(x), do: x
+        def caller(x), do: shared(x) + Helpers.go(x) + MyApp.go(x)
+      end
+      """
+
+      result = extract_helpers(source)
+
+      assert result.new_source =~ "Elixir.MyApp.Helpers.shared(x)"
+    end
+
+    test "clashing alias: the fully-qualified rewrite compiles and calls the right modules" do
+      source = """
+      defmodule AliasClash.Source do
+        alias AliasClash.Other.Helpers
+
+        def shared(x), do: x * 2
+        def caller(x), do: shared(x) + Helpers.go(x)
+      end
+      """
+
+      other = """
+      defmodule AliasClash.Other.Helpers do
+        def go(x), do: x + 100
+      end
+      """
+
+      result = extract_helpers(source, "AliasClash.Helpers")
+
+      mods = compile_and_cleanup([other, result.target_content, result.new_source])
+      assert AliasClash.Helpers in mods
+      assert apply(AliasClash.Source, :caller, [1]) == 103
+    end
   end
 
   describe "extract/2 — caller call-site rewriting" do
