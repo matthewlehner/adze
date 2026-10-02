@@ -633,6 +633,56 @@ defmodule AdzeExtractTest do
       assert Piped in mods
     end
 
+    test "does not qualify a pipe whose effective arity differs from the extracted def" do
+      # `v |> foo(2)` is `foo(v, 2)` → foo/2, which stays in the source.
+      # It must not be mistaken for a bare `foo(2)` call to foo/1.
+      source = """
+      defmodule PipeArity do
+        def caller(v), do: v |> foo(2)
+        def foo(x), do: x * 2
+        def foo(x, y), do: x + y
+      end
+      """
+
+      {:ok, result} =
+        Extract.extract(source,
+          definition: "foo/1",
+          module: "PipeArity.Foo",
+          path: "/tmp/__nonexistent__.ex"
+        )
+
+      assert result.new_source =~ "v |> foo(2)"
+      refute result.new_source =~ "Foo.foo"
+
+      mods = compile_and_cleanup([result.target_content, result.new_source])
+      assert PipeArity.Foo in mods
+      assert PipeArity in mods
+      assert apply(PipeArity, :caller, [1]) == 3
+    end
+
+    test "qualifies bare calls nested in a non-matching pipe's arguments" do
+      source = """
+      defmodule PipeNested do
+        def caller(v), do: v |> foo(foo(2))
+        def foo(x), do: x * 2
+        def foo(x, y), do: x + y
+      end
+      """
+
+      {:ok, result} =
+        Extract.extract(source,
+          definition: "foo/1",
+          module: "PipeNested.Foo",
+          path: "/tmp/__nonexistent__.ex"
+        )
+
+      assert result.new_source =~ "v |> foo(Foo.foo(2))"
+
+      mods = compile_and_cleanup([result.target_content, result.new_source])
+      assert PipeNested in mods
+      assert apply(PipeNested, :caller, [1]) == 5
+    end
+
     test "rewrites multiple call sites in the same caller" do
       source = """
       defmodule MultiCall do
