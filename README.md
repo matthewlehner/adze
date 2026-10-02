@@ -8,8 +8,7 @@ AI coding agents waste context window reading 2000-line files, then fumble
 multi-edit refactors across a codebase. Adze fixes both problems.
 
 **Adze parses Elixir source as AST, returns a structural skeleton with exact
-line ranges (~50 tokens instead of the whole file), and lets the agent read
-only the bytes it needs.** When it's time to refactor, the same AST machinery
+line ranges, and lets the agent read only the lines it needs.** When it's time to refactor, the same AST machinery
 performs safe mechanical transforms — extract, rename, reorder — that would be
 tedious and error-prone as multi-edits.
 
@@ -71,33 +70,13 @@ mkdir -p .agents/skills/adze
 cp deps/adze/skill.md .agents/skills/adze/SKILL.md
 ```
 
-Then add the following to your `CLAUDE.md` or `AGENTS.md` (create it if
-it doesn't exist):
+Then append the contents of
+[`agents-snippet.md`](agents-snippet.md) (also at
+`deps/adze/agents-snippet.md`) to your `CLAUDE.md` or `AGENTS.md`, creating
+it if it doesn't exist:
 
-```markdown
-## adze — structural Elixir refactoring
-
-For Elixir codebase exploration: ALWAYS run `mix adze ls --file PATH` before
-reading `.ex` files or spawning exploration agents. Measured: ~150x more
-token-efficient than reading full files (maps a 2000-line module in ~50 tokens
-with exact line ranges, vs reading the whole file). Returns in milliseconds.
-Use the outline to identify the line range you need, then Read only that range.
-
-For structural edits (rename, extract, move, privatize): ALWAYS use `mix adze`
-instead of multi-edit. The tool does AST-aware rewrites across the entire project
-in one pass — no missed call sites, no broken aliases, no formatting drift.
-
-Key commands:
-- `mix adze ls --file PATH` — structural outline with line ranges (~50 tokens per file)
-- `mix adze find-callers --target Mod.fun/N` — project-wide caller search (resolves aliases, pipes, captures)
-- `mix adze rename! --from Old --to New` — rename a module across the entire project
-- `mix adze extract! --file PATH --definition fun/N --module New.Mod` — extract function + private closure into new module
-- `mix adze mv! --file PATH --definition fun/N --before other/M` — reorder defs within a module
-- `mix adze extract-private! --file PATH --definition fun/N` — flip def → defp after verifying no external callers
-
-Always dry-run first (no `!`), then apply with `!`. Run `mix compile --warnings-as-errors` after writes.
-
-Full reference (flags, caveats, workflows): see the adze skill file in this project's skills directory.
+```bash
+cat deps/adze/agents-snippet.md >> AGENTS.md
 ```
 
 ### usage_rules (optional, richer context)
@@ -129,7 +108,7 @@ If none of these match, fall back to standard read/edit/grep.
 ## Quick Start
 
 ```bash
-# Map a file's structure (agent reads ~50 tokens instead of the whole file)
+# Map a file's structure without reading all of it
 mix adze ls --file lib/my_app/accounts.ex
 
 # Find all callers of a function across the project
@@ -137,9 +116,54 @@ mix adze find-callers --target MyApp.Accounts.register/1
 
 # Several arities at once (e.g. a function with default arguments)
 mix adze find-callers --target MyApp.Accounts.register/1,2
+```
 
-# Extract a function + its private helpers into a new module
-mix adze extract! --file lib/my_app/accounts.ex --definition register/1 --module MyApp.Registration
+### Preview, then write
+
+Every write command is a dry-run unless you add `!`. The dry-run prints what
+would change and touches nothing:
+
+```
+$ mix adze extract --file lib/sample.ex --definition greet/1 --module Sample.Greeter
+# new file: ./lib/sample/greeter.ex (Sample.Greeter)
+defmodule Sample.Greeter do
+  @spec greet(String.t()) :: String.t()
+  def greet(name) when is_binary(name) do
+    "hello, " <> name
+  end
+
+  def greet(_), do: "hello, stranger"
+end
+
+# source diff
+--- a
++++ b
+@@ -13,13 +13,6 @@
+
+   defstruct [:id, :name, count: 0]
+
+-  @spec greet(String.t()) :: String.t()
+-  def greet(name) when is_binary(name) do
+-    "hello, " <> name
+-  end
+-
+-  def greet(_), do: "hello, stranger"
+-
+   defp internal(x), do: x * 2
+ ...
+
+# dropped directives (use / import / require)
+# add back to the new target module if the build needs them.
+  source:6  use GenServer
+  source:8  import Enum, only: [map: 2]
+  source:9  require Logger
+```
+
+Read the diff (and the dropped directives), then apply:
+
+```bash
+mix adze extract! --file lib/sample.ex --definition greet/1 --module Sample.Greeter
+mix compile --warnings-as-errors
 ```
 
 ## Command Reference
@@ -178,22 +202,24 @@ defmodule Sample   L1–40
   use GenServer   L6
   alias Sample.Inner   L7
   import Enum   L8
-  @behaviour "GenServer"   L11
+  require Logger   L9
+  @behaviour GenServer   L11
+  @some_attr   L12
   defstruct [:id, :name, :count]   L14
-  @spec :greet   L16
+  @spec greet   L16
     greet/1 when …   L17–19
     greet/1   L21
   p internal/1   L23
   m debug/1   L25–29
   g is_pos/1 when …   L31
   d child_call/1   L33
-
-  defmodule Inner   L35–39
-      hello/0   L37
-    p helper/1   L38
 ```
 
-Legend: `p` = `defp`, `m` = `defmacro`, `g` = `defguard`, `d` = `defdelegate`.
+Each line is a definition with its line range. A one-character marker column
+precedes the name: `p` = `defp`, `m` = `defmacro`, `g` = `defguard`,
+`d` = `defdelegate`; public `def`s have a blank marker (hence the deeper
+indent). `@spec greet` is the spec for `greet`. Use `--format json` for the
+same data as a structured tree.
 
 </details>
 

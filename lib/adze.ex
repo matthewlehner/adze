@@ -85,7 +85,8 @@ defmodule Adze do
   attributes (`@moduledoc`, `@doc`, custom attrs), and directives
   (`alias`, `import`, `require`, `use`) — annotated with line ranges.
 
-  This is designed so an AI coding agent can map a 2000-line file in ~50 tokens.
+  This is designed so an AI coding agent can map a large file without reading
+  all of it.
 
   ## Examples
 

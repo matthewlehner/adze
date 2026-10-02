@@ -22,3 +22,9 @@ erl_crash.dump
 # Ignore package tarball (built via "mix hex.build").
 adze-*.tar
 
+
+# Editor / OS / tool state.
+.DS_Store
+.elixir_ls/
+.expert/
+.claude/

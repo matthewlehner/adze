@@ -82,6 +82,7 @@ defmodule Adze.MixProject do
         .formatter.exs
         usage-rules.md
         skill.md
+        agents-snippet.md
       )
     ]
   end
