@@ -1228,6 +1228,75 @@ defmodule AdzeExtractTest do
                )
     end
 
+    test "refuses when the closure uses a public macro that stays in the source" do
+      source = """
+      defmodule PubMacro do
+        defmacro twice(x), do: quote(do: unquote(x) * 2)
+        def go(x), do: twice(x)
+        def stay(x), do: twice(x)
+      end
+      """
+
+      assert {:error,
+              {:private_macro_referenced,
+               %{definitions: [{:defmacro, :twice, 1}], source: "PubMacro"}}} =
+               Extract.extract(source,
+                 definition: "go/1",
+                 module: "PubMacro.Go",
+                 path: "/tmp/__nonexistent_target__.ex"
+               )
+    end
+
+    test "refuses when only a clause guard uses a staying public guard" do
+      source = """
+      defmodule GuardUse do
+        defguard is_pos(x) when x > 0
+        def go(x) when is_pos(x), do: x
+        def stay(x) when is_pos(x), do: x
+      end
+      """
+
+      assert {:error,
+              {:private_macro_referenced, %{definitions: [{:defguard, :is_pos, 1}]}}} =
+               Extract.extract(source,
+                 definition: "go/1",
+                 module: "GuardUse.Go",
+                 path: "/tmp/__nonexistent_target__.ex"
+               )
+    end
+
+    test "refuses to move a public macro the source still calls" do
+      source = """
+      defmodule MovedMacro do
+        defmacro twice(x), do: quote(do: unquote(x) * 2)
+        def stay(x), do: twice(x)
+      end
+      """
+
+      assert {:error, {:moved_macro_referenced, %{definitions: [{:defmacro, :twice, 1}]}}} =
+               Extract.extract(source,
+                 definition: "twice/1",
+                 module: "MovedMacro.Twice",
+                 path: "/tmp/__nonexistent_target__.ex"
+               )
+    end
+
+    test "moves a public macro nobody calls" do
+      source = """
+      defmodule LoneMacro do
+        defmacro twice(x), do: quote(do: unquote(x) * 2)
+        def stay(x), do: x
+      end
+      """
+
+      assert {:ok, %{moved_macro_keys: [{:defmacro, :twice, 1}]}} =
+               Extract.extract(source,
+                 definition: "twice/1",
+                 module: "LoneMacro.Twice",
+                 path: "/tmp/__nonexistent_target__.ex"
+               )
+    end
+
     test "rewrites pipe to a source-staying function" do
       source = """
       defmodule MyApp.Source do
@@ -1630,6 +1699,54 @@ defmodule AdzeExtractTest do
       caller_diff = result.caller_diffs["lib/caller.ex"]
       assert caller_diff, "expected caller file to be touched"
       assert caller_diff =~ "MyApp.PublicEntry"
+    end
+
+    test "refuses when another file imports the source and may call the moved def" do
+      files = %{
+        "lib/source.ex" => """
+        defmodule MyApp.Source do
+          def inner(x), do: x + 1
+          def keep(x), do: x
+        end
+        """,
+        "lib/caller.ex" => """
+        defmodule MyApp.Caller do
+          import MyApp.Source
+          def a(v), do: inner(v)
+        end
+        """
+      }
+
+      assert {:error, {:imported_by, %{files: ["lib/caller.ex"]}}} =
+               Extract.extract_file("lib/source.ex",
+                 definition: "inner/1",
+                 module: "MyApp.Inner",
+                 files: files
+               )
+    end
+
+    test "allows an importer whose :only list omits the moved def" do
+      files = %{
+        "lib/source.ex" => """
+        defmodule MyApp.Source do
+          def inner(x), do: x + 1
+          def keep(x), do: x
+        end
+        """,
+        "lib/caller.ex" => """
+        defmodule MyApp.Caller do
+          import MyApp.Source, only: [keep: 1]
+          def a(v), do: keep(v)
+        end
+        """
+      }
+
+      assert {:ok, _} =
+               Extract.extract_file("lib/source.ex",
+                 definition: "inner/1",
+                 module: "MyApp.Inner",
+                 files: files
+               )
     end
 
     test "leaves a cross-file pipe alone when its effective arity stays in the source" do

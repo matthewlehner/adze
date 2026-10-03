@@ -127,7 +127,8 @@ defmodule Adze.Extract do
           caller_diffs: %{Path.t() => String.t()},
           dropped_directives: [dropped_directive()],
           promoted: [{atom(), non_neg_integer()}],
-          promoted_in_source: [{atom(), non_neg_integer()}]
+          promoted_in_source: [{atom(), non_neg_integer()}],
+          moved_macro_keys: [{atom(), atom(), non_neg_integer()}]
         }
 
   @spec extract(String.t(), opts()) :: {:ok, result()} | {:error, term()}
@@ -146,7 +147,8 @@ defmodule Adze.Extract do
          {:ok, body_info} <- collect_body_info(ast, source_module),
          {:ok, closure_defs} <- compute_closure(source, def_key, source_module, all_defs, opts),
          {:ok, shared_privates} <-
-           shared_private_helpers(source, closure_defs, source_module, all_defs, opts) do
+           shared_private_helpers(source, closure_defs, source_module, all_defs, opts),
+         :ok <- check_moved_macros_unused(source, closure_defs, source_module, opts) do
       {kept_directives, dropped_directives_raw} =
         filter_directives(body_info.directives, closure_defs)
 
@@ -231,7 +233,8 @@ defmodule Adze.Extract do
            caller_diffs: %{},
            dropped_directives: dropped_directives,
            promoted: promoted,
-           promoted_in_source: promoted_in_source
+           promoted_in_source: promoted_in_source,
+           moved_macro_keys: Enum.map(moved_macros(closure_defs), &{&1.kind, &1.name, &1.arity})
          }}
       catch
         {:typep_referenced, info} -> {:error, {:typep_referenced, info}}
@@ -273,7 +276,9 @@ defmodule Adze.Extract do
 
     with {:ok, source} <- read_source(path, opts),
          {:ok, single} <- extract(source, opts),
-         {:ok, rewrite, caller_diffs} <- run_project_rewrite(path, single, opts) do
+         {:ok, rewrite, caller_diffs} <- run_project_rewrite(path, single, opts),
+         :ok <- check_moved_macros_external(single, caller_diffs),
+         :ok <- check_importers(rewrite, single, path) do
       {:ok, Map.put(single, :caller_diffs, caller_diffs), rewrite}
     end
   end
@@ -404,6 +409,8 @@ defmodule Adze.Extract do
   # guards are refused instead: making them public isn't enough — the
   # target would also need `require SourceModule`, and a guard may be
   # used inside a `when` clause. Leave that decision to the user.
+  # Public macros/guards staying in the source are refused for the same
+  # reason: the target would call `SourceModule.m(x)` with no `require`.
   defp shared_private_helpers(source, closure_defs, source_module, all_defs, opts) do
     closure_keys = MapSet.new(closure_defs, &{&1.name, &1.arity})
 
@@ -418,7 +425,8 @@ defmodule Adze.Extract do
       shared =
         all_defs
         |> Enum.filter(fn d ->
-          d.module == source_module and d.visibility == :private and
+          d.module == source_module and
+            (d.visibility == :private or d.kind in [:defmacro, :defguard]) and
             not MapSet.member?(closure_keys, {d.name, d.arity}) and
             MapSet.member?(called, {d.name, d.arity})
         end)
@@ -441,6 +449,85 @@ defmodule Adze.Extract do
       # will still flag any private remote call.
       _ -> {:ok, []}
     end
+  end
+
+  # A public macro/guard that moves to the target can't be called as
+  # `Target.m(x)` without `require Target` at each call site, and adze
+  # doesn't insert that. Refuse when the source module still calls one.
+  defp moved_macros(closure_defs) do
+    for d <- closure_defs, d.visibility == :public, d.kind in [:defmacro, :defguard], do: d
+  end
+
+  defp check_moved_macros_unused(source, closure_defs, source_module, opts) do
+    case moved_macros(closure_defs) do
+      [] ->
+        :ok
+
+      macros ->
+        closure_keys = MapSet.new(closure_defs, &{&1.name, &1.arity})
+
+        with {:ok, %{modules: modules}} <- Deps.deps(source, opts),
+             %{defs: dep_defs} <- Enum.find(modules, &(&1.name == source_module)) do
+          remaining_calls =
+            dep_defs
+            |> Enum.reject(&MapSet.member?(closure_keys, {&1.name, &1.arity}))
+            |> Enum.flat_map(& &1.calls)
+            |> MapSet.new()
+
+          case Enum.filter(macros, &MapSet.member?(remaining_calls, {&1.name, &1.arity})) do
+            [] -> :ok
+            used -> {:error, moved_macro_error(used, source_module)}
+          end
+        else
+          _ -> :ok
+        end
+    end
+  end
+
+  # Cross-file callers: any caller diff means a call site was rewritten
+  # to `Target.m(x)` without a `require`.
+  defp check_moved_macros_external(single, caller_diffs) do
+    macro_keys = single.moved_macro_keys
+
+    if macro_keys != [] and caller_diffs != %{} do
+      {:error,
+       {:moved_macro_referenced,
+        %{definitions: macro_keys, source: single.source_module, callers: Map.keys(caller_diffs)}}}
+    else
+      :ok
+    end
+  end
+
+  # `import Source` callers use bare calls, which the rewrite can't
+  # retarget — the moved def would silently become undefined there.
+  defp check_importers(rewrite, single, source_path) do
+    case ProjectRewrite.importers(
+           rewrite,
+           single.source_module,
+           single.public_closure_keys,
+           [source_path, single.target_path]
+         ) do
+      [] ->
+        :ok
+
+      files ->
+        {:error,
+         {:imported_by,
+          %{
+            definitions: single.public_closure_keys,
+            source: single.source_module,
+            files: Enum.sort(files)
+          }}}
+    end
+  end
+
+  defp moved_macro_error(used, source_module) do
+    {:moved_macro_referenced,
+     %{
+       definitions: Enum.map(used, &{&1.kind, &1.name, &1.arity}),
+       source: source_module,
+       callers: [source_module]
+     }}
   end
 
   # The slice-render path copies source text verbatim, so the private

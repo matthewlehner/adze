@@ -450,6 +450,60 @@ defmodule Adze.ProjectRewrite do
     e -> {:error, {:render, e}}
   end
 
+  @doc """
+  Paths of project files (other than `exclude`) containing
+  `import <module>` whose options could bring in one of `keys`
+  (`[{name, arity}]`). Calls through an import are bare, so no call-site
+  rewrite can retarget them. Literal `only: [...]` lists that omit every
+  key are ignored.
+  """
+  @spec importers(t(), String.t(), [{atom(), non_neg_integer()}], [Path.t()]) :: [Path.t()]
+  def importers(%__MODULE__{igniter: igniter}, module, keys, exclude) do
+    parts = module |> String.split(".") |> Enum.map(&String.to_atom/1)
+    exclude = Enum.map(exclude, &Path.expand/1)
+
+    for source <- Rewrite.sources(igniter.rewrite),
+        path = Rewrite.Source.get(source, :path),
+        String.ends_with?(path, [".ex", ".exs"]),
+        Path.expand(path) not in exclude,
+        imports_module?(Rewrite.Source.get(source, :content), parts, keys),
+        do: path
+  end
+
+  defp imports_module?(content, parts, keys) do
+    case Code.string_to_quoted(content) do
+      {:ok, ast} ->
+        {_, found} =
+          Macro.prewalk(ast, false, fn
+            {:import, _, [{:__aliases__, _, ^parts} | opts]} = node, acc ->
+              {node, acc or import_covers?(opts, keys)}
+
+            node, acc ->
+              {node, acc}
+          end)
+
+        found
+
+      _ ->
+        false
+    end
+  end
+
+  defp import_covers?([opts], keys) when is_list(opts) do
+    case Keyword.get(opts, :only) do
+      list when is_list(list) and list != [] ->
+        Enum.any?(list, fn
+          {n, a} when is_atom(n) and is_integer(a) -> {n, a} in keys
+          _ -> true
+        end)
+
+      _ ->
+        true
+    end
+  end
+
+  defp import_covers?(_, _keys), do: true
+
   defp changed_sources(%__MODULE__{igniter: igniter}) do
     igniter.rewrite
     |> Rewrite.sources()

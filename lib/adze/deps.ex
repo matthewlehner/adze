@@ -166,6 +166,7 @@ defmodule Adze.Deps do
 
           {name, head_arity, defaults_count} ->
             body = if kind in @body_kinds, do: extract_body(rest), else: nil
+            body = with_guard(head_or_when, body)
 
             [
               %{
@@ -186,6 +187,12 @@ defmodule Adze.Deps do
   end
 
   defp clause_node(_), do: []
+
+  # Calls in a `when` guard count as calls from the clause, so guard
+  # macros/guards are visible to dependency analysis.
+  defp with_guard({:when, _, [_head, guard]}, nil), do: guard
+  defp with_guard({:when, _, [_head, guard]}, body), do: {:__block__, [], [guard, body]}
+  defp with_guard(_, body), do: body
 
   defp head_signature({:when, _, [head, _guard]}), do: head_signature(head)
 

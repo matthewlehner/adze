@@ -426,9 +426,28 @@ defmodule Adze.CLI do
         names = Enum.map_join(defs, ", ", fn {kind, n, a} -> "#{kind} #{n}/#{a}" end)
 
         die(
-          "extracted code uses private macros/guards that stay in #{mod}: #{names}.\n" <>
-            "Make them public (and add `require #{mod}` to the target) or move " <>
-            "them first, then re-run extract."
+          "extracted code uses macros/guards that stay in #{mod}: #{names}.\n" <>
+            "The target would need `require #{mod}` (and private ones must be public), " <>
+            "or move them first, then re-run extract."
+        )
+
+      {:error, {:moved_macro_referenced, %{definitions: defs, source: mod}}} ->
+        names = Enum.map_join(defs, ", ", fn {kind, n, a} -> "#{kind} #{n}/#{a}" end)
+
+        die(
+          "extracting #{names} would leave callers (in #{mod} or other files) " <>
+            "calling it remotely without `require`.\n" <>
+            "Add `require <Target>` to each caller yourself after moving, or " <>
+            "move the callers too."
+        )
+
+      {:error, {:imported_by, %{source: mod, files: files, definitions: defs}}} ->
+        names = Enum.map_join(defs, ", ", fn {n, a} -> "#{n}/#{a}" end)
+
+        die(
+          "#{mod} is imported by #{Enum.join(files, ", ")}; bare calls there to " <>
+            "#{names} can't be retargeted.\nSwitch those files to qualified calls " <>
+            "(or import the new module) first, then re-run extract."
         )
 
       {:error, {:ambiguous_attribute, _} = err} ->
