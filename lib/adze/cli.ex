@@ -31,6 +31,9 @@ defmodule Adze.CLI do
   @doc false
   def main(argv) do
     case parse(argv) do
+      :help ->
+        IO.write(help())
+
       {:ok, %{op: op, file: file, format: format}} when op in [:ls, :outline] ->
         run_outline(file, format)
 
@@ -101,7 +104,10 @@ defmodule Adze.CLI do
   defp run_deps(path, format, definition) do
     case Deps.deps_file(path) do
       {:ok, deps} ->
-        IO.write(Formatter.format_deps(filter_definition(deps, definition), format))
+        case filter_definition(deps, definition) do
+          {:ok, filtered} -> IO.write(Formatter.format_deps(filtered, format))
+          {:error, msg} -> die(msg <> " in #{path}")
+        end
 
       {:error, {:file_read, reason}} ->
         die("could not read #{path}: #{:file.format_error(reason)}")
@@ -118,6 +124,9 @@ defmodule Adze.CLI do
 
   defp run_ls_deps(path, format, definition) do
     case LsDeps.ls_deps_file(path, definition) do
+      {:ok, %{modules: []}} ->
+        die("--definition #{definition} not found in #{path}")
+
       {:ok, result} ->
         IO.write(Formatter.format_ls_deps(result, format))
 
@@ -136,6 +145,9 @@ defmodule Adze.CLI do
 
   defp run_ls_extract(path, format, definition) do
     case LsDeps.ls_extract_file(path, definition) do
+      {:ok, %{modules: []}} ->
+        die("--definition #{definition} not found in #{path}")
+
       {:ok, result} ->
         IO.write(Formatter.format_ls_extract(result, format))
 
@@ -519,26 +531,34 @@ defmodule Adze.CLI do
   defp maybe_put_opt(opts, _key, nil), do: opts
   defp maybe_put_opt(opts, key, value), do: Keyword.put(opts, key, value)
 
-  defp filter_definition(deps, nil), do: deps
+  defp filter_definition(deps, nil), do: {:ok, deps}
 
   defp filter_definition(deps, spec) do
-    {:ok, {name, arity}} =
-      Definition.resolve_spec(spec, Enum.flat_map(deps.modules, & &1.defs))
+    with {:ok, {name, arity}} <-
+           Definition.resolve_spec(spec, Enum.flat_map(deps.modules, & &1.defs)) do
+      modules =
+        deps.modules
+        |> Enum.map(fn m ->
+          %{m | defs: Enum.filter(m.defs, &(&1.name == name and &1.arity == arity))}
+        end)
+        |> Enum.reject(&(&1.defs == []))
 
-    modules =
-      deps.modules
-      |> Enum.map(fn m ->
-        %{m | defs: Enum.filter(m.defs, &(&1.name == name and &1.arity == arity))}
-      end)
-      |> Enum.reject(&(&1.defs == []))
-
-    %{deps | modules: modules}
+      if modules == [] do
+        {:error, "--definition #{spec} not found"}
+      else
+        {:ok, %{deps | modules: modules}}
+      end
+    else
+      {:error, _} -> {:error, "bad --definition value: #{spec} (expected name/arity)"}
+    end
   end
 
   defp parse([]), do: {:error, "no op given"}
+  defp parse([flag | _]) when flag in ["--help", "-h", "help"], do: :help
+  defp parse([_op, flag | _]) when flag in ["--help", "-h"], do: :help
 
   defp parse([op | rest]) do
-    {parsed, _, _} =
+    {parsed, _, invalid} =
       OptionParser.parse(rest,
         strict: [
           file: :string,
@@ -560,7 +580,8 @@ defmodule Adze.CLI do
 
     definition_raw = Keyword.get(parsed, :definition) || Keyword.get(parsed, :def)
 
-    with {:ok, format} <- parse_format(Keyword.get(parsed, :format, "text")),
+    with :ok <- check_invalid(invalid),
+         {:ok, format} <- parse_format(Keyword.get(parsed, :format, "text")),
          {:ok, definition} <- parse_definition(definition_raw),
          {:ok, before} <- parse_definition(Keyword.get(parsed, :before), "--before") do
       {:ok,
@@ -580,6 +601,13 @@ defmodule Adze.CLI do
          force: Keyword.get(parsed, :force, false)
        }}
     end
+  end
+
+  defp check_invalid([]), do: :ok
+
+  defp check_invalid(invalid) do
+    flags = Enum.map_join(invalid, ", ", fn {flag, _} -> flag end)
+    {:error, "unknown or invalid option(s): #{flags}"}
   end
 
   defp parse_format("json"), do: {:ok, :json}
@@ -633,8 +661,7 @@ defmodule Adze.CLI do
   defp format_write_error(other), do: inspect(other)
 
   defp die(msg) do
-    IO.puts(:stderr, msg)
-    System.halt(1)
+    Mix.raise(String.trim_trailing(msg))
   end
 
   defp help do
