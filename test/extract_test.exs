@@ -1256,8 +1256,7 @@ defmodule AdzeExtractTest do
       end
       """
 
-      assert {:error,
-              {:private_macro_referenced, %{definitions: [{:defguard, :is_pos, 1}]}}} =
+      assert {:error, {:private_macro_referenced, %{definitions: [{:defguard, :is_pos, 1}]}}} =
                Extract.extract(source,
                  definition: "go/1",
                  module: "GuardUse.Go",
@@ -1742,6 +1741,146 @@ defmodule AdzeExtractTest do
       }
 
       assert {:ok, _} =
+               Extract.extract_file("lib/source.ex",
+                 definition: "inner/1",
+                 module: "MyApp.Inner",
+                 files: files
+               )
+    end
+
+    test "refuses a `use` caller when __using__ injects an import" do
+      files = %{
+        "lib/source.ex" => """
+        defmodule MyApp.Source do
+          defmacro __using__(_), do: quote(do: import(MyApp.Source))
+          def inner(x), do: x + 1
+          def keep(x), do: x
+        end
+        """,
+        "lib/caller.ex" => """
+        defmodule MyApp.Caller do
+          use MyApp.Source
+        end
+        """
+      }
+
+      assert {:error, {:imported_by, %{files: ["lib/caller.ex"]}}} =
+               Extract.extract_file("lib/source.ex",
+                 definition: "inner/1",
+                 module: "MyApp.Inner",
+                 files: files
+               )
+    end
+
+    test "allows a `use` caller when __using__ injects no import" do
+      files = %{
+        "lib/source.ex" => """
+        defmodule MyApp.Source do
+          defmacro __using__(_), do: quote(do: @x 1)
+          def inner(x), do: x + 1
+          def keep(x), do: x
+        end
+        """,
+        "lib/caller.ex" => """
+        defmodule MyApp.Caller do
+          use MyApp.Source
+        end
+        """
+      }
+
+      assert {:ok, _} =
+               Extract.extract_file("lib/source.ex",
+                 definition: "inner/1",
+                 module: "MyApp.Inner",
+                 files: files
+               )
+    end
+
+    test "refuses `except:` that still imports the moved def" do
+      files = %{
+        "lib/source.ex" => """
+        defmodule MyApp.Source do
+          def inner(x), do: x + 1
+          def keep(x), do: x
+        end
+        """,
+        "lib/caller.ex" => """
+        defmodule MyApp.Caller do
+          import MyApp.Source, except: [keep: 1]
+        end
+        """
+      }
+
+      assert {:error, {:imported_by, %{files: ["lib/caller.ex"]}}} =
+               Extract.extract_file("lib/source.ex",
+                 definition: "inner/1",
+                 module: "MyApp.Inner",
+                 files: files
+               )
+    end
+
+    test "allows `except:` naming the moved def" do
+      files = %{
+        "lib/source.ex" => """
+        defmodule MyApp.Source do
+          def inner(x), do: x + 1
+          def keep(x), do: x
+        end
+        """,
+        "lib/caller.ex" => """
+        defmodule MyApp.Caller do
+          import MyApp.Source, except: [inner: 1]
+        end
+        """
+      }
+
+      assert {:ok, _} =
+               Extract.extract_file("lib/source.ex",
+                 definition: "inner/1",
+                 module: "MyApp.Inner",
+                 files: files
+               )
+    end
+
+    test "allows `only: :macros` for a moved function" do
+      files = %{
+        "lib/source.ex" => """
+        defmodule MyApp.Source do
+          def inner(x), do: x + 1
+          def keep(x), do: x
+        end
+        """,
+        "lib/caller.ex" => """
+        defmodule MyApp.Caller do
+          import MyApp.Source, only: :macros
+        end
+        """
+      }
+
+      assert {:ok, _} =
+               Extract.extract_file("lib/source.ex",
+                 definition: "inner/1",
+                 module: "MyApp.Inner",
+                 files: files
+               )
+    end
+
+    test "refuses `only: :functions` for a moved function" do
+      files = %{
+        "lib/source.ex" => """
+        defmodule MyApp.Source do
+          def inner(x), do: x + 1
+          def keep(x), do: x
+        end
+        """,
+        "lib/caller.ex" => """
+        defmodule MyApp.Caller do
+          import MyApp.Source, only: :functions
+        end
+        """
+      }
+
+      assert {:error, {:imported_by, %{files: ["lib/caller.ex"]}}} =
                Extract.extract_file("lib/source.ex",
                  definition: "inner/1",
                  module: "MyApp.Inner",

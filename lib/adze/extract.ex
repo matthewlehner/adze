@@ -128,7 +128,8 @@ defmodule Adze.Extract do
           dropped_directives: [dropped_directive()],
           promoted: [{atom(), non_neg_integer()}],
           promoted_in_source: [{atom(), non_neg_integer()}],
-          moved_macro_keys: [{atom(), atom(), non_neg_integer()}]
+          moved_macro_keys: [{atom(), atom(), non_neg_integer()}],
+          public_closure_classes: %{{atom(), non_neg_integer()} => :macro | :function}
         }
 
   @spec extract(String.t(), opts()) :: {:ok, result()} | {:error, term()}
@@ -234,6 +235,13 @@ defmodule Adze.Extract do
            dropped_directives: dropped_directives,
            promoted: promoted,
            promoted_in_source: promoted_in_source,
+           public_closure_classes:
+             closure_defs
+             |> Enum.filter(&(&1.visibility == :public))
+             |> Map.new(
+               &{{&1.name, &1.arity},
+                if(&1.kind in [:defmacro, :defguard], do: :macro, else: :function)}
+             ),
            moved_macro_keys: Enum.map(moved_macros(closure_defs), &{&1.kind, &1.name, &1.arity})
          }}
       catch
@@ -501,11 +509,19 @@ defmodule Adze.Extract do
   # `import Source` callers use bare calls, which the rewrite can't
   # retarget — the moved def would silently become undefined there.
   defp check_importers(rewrite, single, source_path) do
+    kinds = single.public_closure_classes
+
+    keys =
+      Enum.map(single.public_closure_keys, fn {n, a} ->
+        {n, a, Map.get(kinds, {n, a}, :function)}
+      end)
+
     case ProjectRewrite.importers(
            rewrite,
            single.source_module,
-           single.public_closure_keys,
-           [source_path, single.target_path]
+           keys,
+           [source_path, single.target_path],
+           use_imports?: uses_inject_import?(single.new_source)
          ) do
       [] ->
         :ok
@@ -518,6 +534,33 @@ defmodule Adze.Extract do
             source: single.source_module,
             files: Enum.sort(files)
           }}}
+    end
+  end
+
+  # Does the source's `__using__` inject an `import`? Then `use Source`
+  # in another file brings the source's defs in as bare calls.
+  defp uses_inject_import?(source) do
+    case Code.string_to_quoted(source) do
+      {:ok, ast} ->
+        {_, found} =
+          Macro.prewalk(ast, false, fn
+            {:defmacro, _, [{:__using__, _, _} | _]} = node, acc ->
+              {_, has?} =
+                Macro.prewalk(node, false, fn
+                  {:import, _, _} = n, _ -> {n, true}
+                  n, a -> {n, a}
+                end)
+
+              {node, acc or has?}
+
+            node, acc ->
+              {node, acc}
+          end)
+
+        found
+
+      _ ->
+        false
     end
   end
 

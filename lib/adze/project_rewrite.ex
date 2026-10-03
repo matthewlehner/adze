@@ -452,31 +452,42 @@ defmodule Adze.ProjectRewrite do
 
   @doc """
   Paths of project files (other than `exclude`) containing
-  `import <module>` whose options could bring in one of `keys`
-  (`[{name, arity}]`). Calls through an import are bare, so no call-site
-  rewrite can retarget them. Literal `only: [...]` lists that omit every
-  key are ignored.
+  `import <module>` (or, with `use_imports?: true`, `use <module>`)
+  whose options could bring in one of `keys` — `[{name, arity, class}]`
+  with `class` `:macro` or `:function`. Calls through an import are
+  bare, so no call-site rewrite can retarget them. Literal `only:` /
+  `except:` lists and `only: :macros | :functions` are honoured.
   """
-  @spec importers(t(), String.t(), [{atom(), non_neg_integer()}], [Path.t()]) :: [Path.t()]
-  def importers(%__MODULE__{igniter: igniter}, module, keys, exclude) do
+  @spec importers(
+          t(),
+          String.t(),
+          [{atom(), non_neg_integer(), :macro | :function}],
+          [Path.t()],
+          keyword()
+        ) ::
+          [Path.t()]
+  def importers(%__MODULE__{igniter: igniter, root: root}, module, keys, exclude, opts \\ []) do
     parts = module |> String.split(".") |> Enum.map(&String.to_atom/1)
-    exclude = Enum.map(exclude, &Path.expand/1)
+    exclude = Enum.map(exclude, &relative_path(&1, root))
+    directives = if Keyword.get(opts, :use_imports?, false), do: [:import, :use], else: [:import]
 
     for source <- Rewrite.sources(igniter.rewrite),
         path = Rewrite.Source.get(source, :path),
         String.ends_with?(path, [".ex", ".exs"]),
-        Path.expand(path) not in exclude,
-        imports_module?(Rewrite.Source.get(source, :content), parts, keys),
+        path not in exclude,
+        imports_module?(Rewrite.Source.get(source, :content), parts, keys, directives),
         do: path
   end
 
-  defp imports_module?(content, parts, keys) do
+  defp imports_module?(content, parts, keys, directives) do
     case Code.string_to_quoted(content) do
       {:ok, ast} ->
         {_, found} =
           Macro.prewalk(ast, false, fn
-            {:import, _, [{:__aliases__, _, ^parts} | opts]} = node, acc ->
-              {node, acc or import_covers?(opts, keys)}
+            {kind, _, [{:__aliases__, _, ^parts} | opts]} = node, acc
+            when kind in [:import, :use] ->
+              covers? = kind in directives and (kind == :use or import_covers?(opts, keys))
+              {node, acc or covers?}
 
             node, acc ->
               {node, acc}
@@ -490,19 +501,32 @@ defmodule Adze.ProjectRewrite do
   end
 
   defp import_covers?([opts], keys) when is_list(opts) do
-    case Keyword.get(opts, :only) do
-      list when is_list(list) and list != [] ->
-        Enum.any?(list, fn
-          {n, a} when is_atom(n) and is_integer(a) -> {n, a} in keys
-          _ -> true
-        end)
+    only = Keyword.get(opts, :only)
+    except = Keyword.get(opts, :except)
 
-      _ ->
-        true
-    end
+    Enum.any?(keys, fn {n, a, class} = _key ->
+      only_ok?(only, n, a, class) and not except_hit?(except, n, a)
+    end)
   end
 
   defp import_covers?(_, _keys), do: true
+
+  defp only_ok?(nil, _, _, _), do: true
+  defp only_ok?(:macros, _, _, class), do: class == :macro
+  defp only_ok?(:functions, _, _, class), do: class == :function
+  defp only_ok?(:sigils, _, _, _), do: false
+
+  defp only_ok?(list, n, a, _) when is_list(list),
+    do:
+      Enum.any?(list, fn
+        {n2, a2} when is_atom(n2) and is_integer(a2) -> {n2, a2} == {n, a}
+        _ -> true
+      end)
+
+  defp only_ok?(_, _, _, _), do: true
+
+  defp except_hit?(list, n, a) when is_list(list), do: {n, a} in list
+  defp except_hit?(_, _, _), do: false
 
   defp changed_sources(%__MODULE__{igniter: igniter}) do
     igniter.rewrite
