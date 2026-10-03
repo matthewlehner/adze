@@ -1748,7 +1748,7 @@ defmodule AdzeExtractTest do
                )
     end
 
-    test "refuses a `use` caller when __using__ injects an import" do
+    test "refuses a `use` caller when __using__ injects an import inline" do
       files = %{
         "lib/source.ex" => """
         defmodule MyApp.Source do
@@ -1772,11 +1772,11 @@ defmodule AdzeExtractTest do
                )
     end
 
-    test "allows a `use` caller when __using__ injects no import" do
+    test "refuses a `use` caller when __using__ calls a helper" do
       files = %{
         "lib/source.ex" => """
         defmodule MyApp.Source do
-          defmacro __using__(_), do: quote(do: @x 1)
+          defmacro __using__(_), do: setup()
           def inner(x), do: x + 1
           def keep(x), do: x
         end
@@ -1788,7 +1788,7 @@ defmodule AdzeExtractTest do
         """
       }
 
-      assert {:ok, _} =
+      assert {:error, {:imported_by, %{files: ["lib/caller.ex"]}}} =
                Extract.extract_file("lib/source.ex",
                  definition: "inner/1",
                  module: "MyApp.Inner",

@@ -91,15 +91,17 @@ defmodule Adze.Extract do
       source and the import could cover a moved def, extract returns
       `{:error, {:imported_by, %{definitions:, source:, files:}}}`.
       Literal `only:` / `except:` lists and `only: :macros | :functions`
-      are honoured. `use Source` counts as an import only when
-      `Source`'s `__using__` contains a literal `import`.
+      are honoured. `use Source` counts as an import whenever `Source`
+      defines `__using__` (its effect can't be ruled out statically).
+      A chained `use` is caught because the file containing the
+      `import Source` / `use Source` node (even inside a `quote`) is
+      itself flagged. Dynamic `only:`/`except:` values are treated as
+      importing everything (a safe over-refusal).
 
-      **Known gap:** imports injected any other way — a helper called
-      from `__using__`, a nested `use` chain, or `import` built
-      dynamically — aren't seen, and the extraction will go through and
-      fail to compile at the bare call. Qualify those calls first, or
-      compile after extracting. Dynamic `only:`/`except:` values are
-      treated as importing everything (a safe over-refusal).
+      **Known gap:** an import whose module is only known at runtime
+      (`import unquote(mod)` in a `__using__`, with `use Base, Source`
+      at the call site) never mentions `Source` literally and isn't
+      seen. Extraction goes through and the bare call fails to compile.
 
   ## `extract!` writes both files
 
@@ -559,24 +561,16 @@ defmodule Adze.Extract do
     end
   end
 
-  # Does the source's `__using__` inject an `import`? Then `use Source`
-  # in another file brings the source's defs in as bare calls.
+  # Does the source define `__using__`? Whatever it does (inline
+  # `import`, a helper call, ...) can't be ruled out statically, so
+  # `use Source` elsewhere is treated as importing the source's defs.
   defp uses_inject_import?(source) do
     case Code.string_to_quoted(source) do
       {:ok, ast} ->
         {_, found} =
           Macro.prewalk(ast, false, fn
-            {:defmacro, _, [{:__using__, _, _} | _]} = node, acc ->
-              {_, has?} =
-                Macro.prewalk(node, false, fn
-                  {:import, _, _} = n, _ -> {n, true}
-                  n, a -> {n, a}
-                end)
-
-              {node, acc or has?}
-
-            node, acc ->
-              {node, acc}
+            {:defmacro, _, [{:__using__, _, _} | _]} = node, _ -> {node, true}
+            node, acc -> {node, acc}
           end)
 
         found

@@ -14,13 +14,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `extract`: refuses (instead of emitting uncompilable code) when the
   closure calls a public macro/guard that stays behind, when a moved
   macro/guard still has callers, or when another file `import`s / `use`s
-  the source and could call a moved def.
+  the source and could call a moved def (`use Source` counts when
+  `Source` defines `__using__`).
 - `deps`: calls in `when` guards now count as calls from the clause.
 
 ### Known limitations
 
-- `extract` only detects `use Source` as an import when `__using__`
-  contains a literal `import`; other injected imports are not seen.
+- `extract` doesn't see imports whose module is only known at runtime
+  (`import unquote(mod)` in a `__using__`, `use Base, Source`).
 
 ## [0.1.0] - 2026-05-22
 
