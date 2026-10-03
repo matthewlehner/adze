@@ -16,9 +16,10 @@ defmodule Adze.FindCallers do
       `alias Foo, as: F` then `F.fun(...)`, and brace-form
       `alias Foo.{Bar, Baz}`.
     * **`__MODULE__`-relative references** — `alias __MODULE__.Inner` then
-      `Inner.fun(...)`, and fully-qualified `__MODULE__.Inner.fun(...)`
-      (with or without an alias), resolved against the innermost
-      enclosing `defmodule`.
+      `Inner.fun(...)`, fully-qualified `__MODULE__.Inner.fun(...)`
+      (with or without an alias), and self-references
+      `__MODULE__.fun(...)` / `&__MODULE__.fun/n`, resolved against the
+      innermost enclosing `defmodule`.
 
   Not yet handled (intentional v1 limits):
 
@@ -59,7 +60,7 @@ defmodule Adze.FindCallers do
       {:ok, %{...}}
   """
 
-  alias Adze.ProjectRewrite
+  alias Adze.{AliasScope, ProjectRewrite}
 
   @type target_spec ::
           String.t()
@@ -202,92 +203,6 @@ defmodule Adze.FindCallers do
 
   # --- alias resolution --------------------------------------------------
 
-  # alias Foo.Bar (skipped when parts contain non-atom AST nodes we
-  # can't statically resolve — `__MODULE__`-prefixed parts are
-  # substituted via `normalize_parts/2` before this check).
-  defp register_alias(table, [{:__aliases__, _, parts}], scope)
-       when is_list(parts) do
-    case normalize_parts(parts, scope) do
-      nil -> table
-      normalized -> Map.put(table, last_str(normalized), join_parts(normalized))
-    end
-  end
-
-  # alias Foo.Bar, as: Baz   /   alias Foo.Bar, warn: false (no rebinding)
-  defp register_alias(table, [{:__aliases__, _, parts}, kw], scope)
-       when is_list(parts) and is_list(kw) do
-    case normalize_parts(parts, scope) do
-      nil ->
-        table
-
-      normalized ->
-        full = join_parts(normalized)
-
-        case extract_as_atom(kw) do
-          nil -> Map.put(table, last_str(normalized), full)
-          as_atom -> Map.put(table, Atom.to_string(as_atom), full)
-        end
-    end
-  end
-
-  # alias Foo.{A, B, C.D}  (and __MODULE__.{A, B})
-  defp register_alias(table, [{{:., _, [base, :{}]}, _, members}], scope) do
-    base_parts =
-      case base do
-        {:__aliases__, _, parts} when is_list(parts) ->
-          case normalize_parts(parts, scope) do
-            nil -> nil
-            normalized -> if Enum.all?(normalized, &is_atom/1), do: normalized, else: nil
-          end
-
-        _ ->
-          nil
-      end
-
-    case base_parts do
-      nil ->
-        table
-
-      _ ->
-        base_str = join_parts(base_parts)
-
-        Enum.reduce(members, table, fn
-          {:__aliases__, _, parts}, acc when is_list(parts) ->
-            if Enum.all?(parts, &is_atom/1) do
-              full = base_str <> "." <> join_parts(parts)
-              Map.put(acc, last_str(parts), full)
-            else
-              acc
-            end
-
-          _, acc ->
-            acc
-        end)
-    end
-  end
-
-  defp register_alias(table, _, _), do: table
-
-  defp extract_as_atom(kw) do
-    Enum.find_value(kw, fn
-      {key, value} ->
-        if unwrap_atom(key) == :as do
-          case value do
-            {:__aliases__, _, [a]} when is_atom(a) -> a
-            _ -> nil
-          end
-        end
-
-      _ ->
-        nil
-    end)
-  end
-
-  defp unwrap_atom({:__block__, _, [a]}) when is_atom(a), do: a
-  defp unwrap_atom(a) when is_atom(a), do: a
-  defp unwrap_atom(_), do: nil
-
-  defp last_str(parts), do: parts |> List.last() |> Atom.to_string()
   defp join_parts(parts), do: parts |> Enum.map(&Atom.to_string/1) |> Enum.join(".")
 
   # --- pipe expansion (qualified-call variant only) ----------------------
@@ -314,73 +229,102 @@ defmodule Adze.FindCallers do
   # --- main walk ---------------------------------------------------------
 
   # Walk aliases and refs together so each call sees only the aliases in
-  # effect at its position. A nested module inherits its parent's aliases,
-  # but changes inside it must not leak into sibling modules.
+  # effect at its position. Aliases are lexically scoped: one declared
+  # inside a `def`, a do-block (`if`, `for`, `test`, ...) or a `->`
+  # clause (`fn`, `case`, ...) ends with that construct. A nested module
+  # inherits its parent's aliases, but changes inside it must not leak
+  # out. `defmodule Inner` nested in `Outer` adds the implicit alias
+  # `Inner` → `Outer.Inner` to the enclosing scope (visible inside
+  # `Inner` and after it in `Outer`).
   defp walk_for_target(ast, target, lines) do
     {_, %{refs: refs}} =
       Macro.traverse(
         ast,
         %{refs: [], scope: [], aliases: %{}, alias_stack: []},
-        fn
-          {:defmodule, _, [alias_ast, _]} = node, acc ->
-            name = Adze.Names.defmodule_name(alias_ast, current_scope(acc.scope) || "")
-
-            {node,
-             %{acc | scope: [name | acc.scope], alias_stack: [acc.aliases | acc.alias_stack]}}
-
-          {:alias, _, args} = node, acc ->
-            {node, %{acc | aliases: register_alias(acc.aliases, args, acc.scope)}}
-
-          # &Mod.fun/arity (qualified capture)
-          {:&, _,
-           [
-             {:/, _,
-              [
-                {{:., _, [{:__aliases__, _, parts}, fun]}, _, _ctx},
-                arity_ast
-              ]}
-           ]} = node,
-          acc
-          when is_atom(fun) ->
-            arity = unwrap_int(arity_ast)
-
-            if match_call(parts, fun, arity, acc.aliases, target, acc.scope) do
-              {node, push_ref(acc, node, :capture, arity, lines)}
-            else
-              {node, acc}
-            end
-
-          # Direct qualified call: Mod.fun(args)
-          {{:., _, [{:__aliases__, _, parts}, fun]}, _, args} = node, acc
-          when is_atom(fun) and is_list(args) ->
-            arity = length(args)
-
-            if match_call(parts, fun, arity, acc.aliases, target, acc.scope) do
-              {node, push_ref(acc, node, :call, arity, lines)}
-            else
-              {node, acc}
-            end
-
-          node, acc ->
-            {node, acc}
-        end,
-        fn
-          {:defmodule, _, _} = node, acc ->
-            {node,
-             %{
-               acc
-               | scope: tl(acc.scope),
-                 aliases: hd(acc.alias_stack),
-                 alias_stack: tl(acc.alias_stack)
-             }}
-
-          node, acc ->
-            {node, acc}
-        end
+        fn node, acc -> visit(node, enter_lexical_scope(node, acc), target, lines) end,
+        fn node, acc -> {node, leave_lexical_scope(node, acc)} end
       )
 
     Enum.reverse(refs)
   end
+
+  # `defmodule` pushes both a module scope and an alias scope; its
+  # implicit alias goes into the table *below* the push so it survives
+  # the module's end.
+  defp enter_lexical_scope({:defmodule, _, [alias_ast, _]}, acc) do
+    current = current_scope(acc.scope)
+    name = Adze.Names.defmodule_name(alias_ast, current || "")
+
+    aliases =
+      case AliasScope.implicit_alias(alias_ast, current, head_bound?(alias_ast, acc.aliases)) do
+        nil -> acc.aliases
+        {short, full} -> Map.put(acc.aliases, short, full)
+      end
+
+    %{acc | scope: [name | acc.scope], aliases: aliases, alias_stack: [aliases | acc.alias_stack]}
+  end
+
+  defp enter_lexical_scope(node, acc) do
+    if AliasScope.scope_node?(node),
+      do: %{acc | alias_stack: [acc.aliases | acc.alias_stack]},
+      else: acc
+  end
+
+  defp leave_lexical_scope({:defmodule, _, [_, _]}, acc) do
+    %{
+      acc
+      | scope: tl(acc.scope),
+        aliases: hd(acc.alias_stack),
+        alias_stack: tl(acc.alias_stack)
+    }
+  end
+
+  defp leave_lexical_scope(node, acc) do
+    if AliasScope.scope_node?(node),
+      do: %{acc | aliases: hd(acc.alias_stack), alias_stack: tl(acc.alias_stack)},
+      else: acc
+  end
+
+  defp head_bound?({:__aliases__, _, [first | _]}, aliases) when is_atom(first),
+    do: Map.has_key?(aliases, Atom.to_string(first))
+
+  defp head_bound?(_alias_ast, _aliases), do: false
+
+  defp visit({:alias, _, args} = node, acc, _target, _lines) do
+    aliases =
+      args
+      |> AliasScope.alias_bindings(current_scope(acc.scope))
+      |> Enum.reduce(acc.aliases, &Map.put(&2, &1.name, &1.module))
+
+    {node, %{acc | aliases: aliases}}
+  end
+
+  # &Mod.fun/arity (qualified capture)
+  defp visit(
+         {:&, _, [{:/, _, [{{:., _, [mod_ast, fun]}, _, _ctx}, arity_ast]}]} = node,
+         acc,
+         target,
+         lines
+       )
+       when is_atom(fun) do
+    arity = unwrap_int(arity_ast)
+
+    if match_call(mod_parts(mod_ast), fun, arity, acc.aliases, target, acc.scope),
+      do: {node, push_ref(acc, node, :capture, arity, lines)},
+      else: {node, acc}
+  end
+
+  # Direct qualified call: Mod.fun(args)
+  defp visit({{:., _, [mod_ast, fun]}, _, args} = node, acc, target, lines)
+       when is_atom(fun) and is_list(args) do
+    arity = length(args)
+
+    if match_call(mod_parts(mod_ast), fun, arity, acc.aliases, target, acc.scope),
+      do: {node, push_ref(acc, node, :call, arity, lines)},
+      else: {node, acc}
+  end
+
+  defp visit(node, acc, _target, _lines), do: {node, acc}
 
   defp push_ref(acc, node, kind, arity, lines) do
     ref =
@@ -397,6 +341,17 @@ defmodule Adze.FindCallers do
   defp arity_matches?(:any, _), do: true
   defp arity_matches?(wanted, arity) when is_list(wanted), do: arity in wanted
   defp arity_matches?(wanted, arity), do: arity == wanted
+
+  # The module side of a qualified call as alias parts: `Foo.Bar` (and
+  # `__MODULE__.Inner`) arrive as `__aliases__`; a bare `__MODULE__` is
+  # its own node, treated as the one-part alias `[__MODULE__]`. Anything
+  # else (a variable, an atom, an expression) isn't statically a module
+  # reference we resolve.
+  defp mod_parts({:__aliases__, _, parts}), do: parts
+  defp mod_parts({:__MODULE__, _, ctx} = node) when is_atom(ctx), do: [node]
+  defp mod_parts(_), do: nil
+
+  defp match_call(nil, _fun, _arity, _aliases, _target, _scope), do: false
 
   defp match_call(parts, fun, arity, aliases, target, scope) do
     case normalize_parts(parts, scope) do

@@ -329,6 +329,116 @@ defmodule Adze.FindCallersTest do
     end
   end
 
+  describe "find_callers/2 — lexical alias scoping" do
+    test "an alias inside a def doesn't leak into the next def" do
+      files = %{
+        "lib/x.ex" => """
+        defmodule X do
+          def one do
+            alias X.Helper
+            Helper.run()
+          end
+
+          def two, do: Helper.run()
+        end
+        """
+      }
+
+      {:ok, x} = FindCallers.find_callers("X.Helper.run/0", files: files)
+      assert [%{line: 4}] = x.files["lib/x.ex"]
+
+      {:ok, top} = FindCallers.find_callers("Helper.run/0", files: files)
+      assert [%{line: 7}] = top.files["lib/x.ex"]
+    end
+
+    test "aliases inside fn / case clauses and do-blocks stay in them" do
+      files = %{
+        "lib/x.ex" => """
+        defmodule X do
+          def go(x) do
+            f = fn -> alias X.Helper; Helper.run() end
+            case x do
+              :a -> alias X.Helper; Helper.run()
+            end
+            if x do
+              alias X.Helper
+              Helper.run()
+            end
+            Helper.run()
+          end
+        end
+        """
+      }
+
+      {:ok, x} = FindCallers.find_callers("X.Helper.run/0", files: files)
+      assert Enum.map(x.files["lib/x.ex"], & &1.line) == [3, 5, 9]
+
+      {:ok, top} = FindCallers.find_callers("Helper.run/0", files: files)
+      assert [%{line: 11}] = top.files["lib/x.ex"]
+    end
+
+    test "a module-level alias stays in effect inside defs" do
+      files = %{
+        "lib/x.ex" => """
+        defmodule X do
+          alias X.Helper
+          def one, do: Helper.run()
+          def two do
+            Helper.run()
+          end
+        end
+        """
+      }
+
+      {:ok, x} = FindCallers.find_callers("X.Helper.run/0", files: files)
+      assert Enum.map(x.files["lib/x.ex"], & &1.line) == [3, 5]
+    end
+
+    test "a nested defmodule adds its implicit alias, after it and inside it" do
+      files = %{
+        "lib/x.ex" => """
+        defmodule Outer do
+          def before, do: Inner.f()
+
+          defmodule Inner do
+            def f, do: :ok
+            def g, do: Inner.f()
+          end
+
+          def later, do: Inner.f()
+        end
+
+        defmodule Sibling do
+          def go, do: Inner.f()
+        end
+        """
+      }
+
+      {:ok, nested} = FindCallers.find_callers("Outer.Inner.f/0", files: files)
+      assert Enum.map(nested.files["lib/x.ex"], & &1.line) == [6, 9]
+
+      {:ok, top} = FindCallers.find_callers("Inner.f/0", files: files)
+      assert Enum.map(top.files["lib/x.ex"], & &1.line) == [2, 13]
+    end
+
+    test "nested defmodule Foo.Bar aliases its first segment" do
+      files = %{
+        "lib/x.ex" => """
+        defmodule Outer do
+          defmodule Foo.Bar do
+            def f, do: :ok
+          end
+
+          def go, do: Foo.Bar.f()
+        end
+        """
+      }
+
+      {:ok, r} = FindCallers.find_callers("Outer.Foo.Bar.f/0", files: files)
+      assert [%{line: 6}] = r.files["lib/x.ex"]
+    end
+  end
+
   describe "find_callers/2 — across files" do
     test "aggregates callers from multiple files, sorted by path" do
       files = %{
@@ -449,6 +559,29 @@ defmodule Adze.FindCallersTest do
 
       [c] = result_files["lib/x.ex"]
       assert c.kind == :call
+    end
+
+    test "bare __MODULE__.fun(...) self-calls and captures resolve" do
+      files = %{
+        "lib/x.ex" => """
+        defmodule X do
+          def a(x), do: __MODULE__.thing(x)
+          def b, do: &__MODULE__.thing/1
+          def c(x), do: x |> __MODULE__.thing()
+          def thing(x), do: x
+
+          defmodule Inner do
+            def d(x), do: __MODULE__.thing(x)
+          end
+        end
+        """
+      }
+
+      assert {:ok, %{total: 3, files: result_files}} =
+               FindCallers.find_callers("X.thing/1", files: files)
+
+      assert Enum.map(result_files["lib/x.ex"], &{&1.line, &1.kind, &1.in_module}) ==
+               [{2, :call, "X"}, {3, :capture, "X"}, {4, :call, "X"}]
     end
   end
 

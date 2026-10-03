@@ -275,6 +275,83 @@ defmodule Adze.ExtractPrivateTest do
       assert ref.in_module == "MyApp.Sibling"
     end
 
+    test "a caller isn't hidden by a function-local alias in an earlier def" do
+      source = """
+      defmodule Helper do
+        def run, do: :ok
+      end
+      """
+
+      caller = """
+      defmodule MyApp.Caller do
+        def one do
+          alias MyApp.Other.Helper
+          Helper.run()
+        end
+
+        def two, do: Helper.run()
+      end
+      """
+
+      assert {:error, {:external_callers, [ref]}} =
+               ExtractPrivate.extract_private(source,
+                 definition: "run/0",
+                 path: "lib/helper.ex",
+                 files: %{"lib/helper.ex" => source, "lib/caller.ex" => caller}
+               )
+
+      assert ref.line == 7
+    end
+
+    test "a caller via a nested module's implicit alias blocks the flip" do
+      source = """
+      defmodule Outer do
+        defmodule Inner do
+          def f, do: :ok
+        end
+
+        def go, do: Inner.f()
+      end
+      """
+
+      assert {:error, {:external_callers, [ref]}} =
+               ExtractPrivate.extract_private(source,
+                 definition: "f/0",
+                 from_module: "Outer.Inner",
+                 path: "lib/outer.ex",
+                 files: %{"lib/outer.ex" => source}
+               )
+
+      assert ref.in_module == "Outer"
+    end
+
+    test "qualified self-calls inside the module block the flip" do
+      source = """
+      defmodule MyApp.Foo do
+        alias __MODULE__, as: Me
+
+        def a(x), do: MyApp.Foo.helper(x)
+        def b(x), do: __MODULE__.helper(x)
+        def c, do: &__MODULE__.helper/1
+        def d(x), do: x |> __MODULE__.helper()
+        def e(x), do: Me.helper(x)
+        def f(x), do: helper(x)
+        def helper(x), do: x * 2
+      end
+      """
+
+      assert {:error, {:external_callers, refs}} =
+               ExtractPrivate.extract_private(source,
+                 definition: "helper/1",
+                 path: "lib/foo.ex",
+                 files: %{"lib/foo.ex" => source}
+               )
+
+      assert Enum.map(refs, & &1.line) == [4, 5, 6, 7, 8]
+      assert Enum.all?(refs, &(&1.in_module == "MyApp.Foo"))
+      assert Enum.map(refs, & &1.kind) == [:call, :call, :capture, :call, :call]
+    end
+
     test "malformed definition specs return errors rather than raising" do
       source = "defmodule X do\n  def real, do: :ok\nend\n"
 

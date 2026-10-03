@@ -40,13 +40,16 @@ defmodule Adze.ExtractPrivate do
 
   ## Safety
 
-  External = a caller in any file other than the source file, OR a
-  caller in the source file whose enclosing `defmodule` is not the
-  target's module. The latter catches the case where a file holds
-  multiple modules and a sibling calls the target via its
-  fully-qualified name. We rely on `Adze.FindCallers` to find the
-  refs, then re-parse each affected file to determine each ref's
-  enclosing module for classification.
+  Any reference `Adze.FindCallers` reports blocks the flip. It only
+  reports *qualified* references (`Mod.fun(...)`, `&Mod.fun/n`,
+  `__MODULE__.fun(...)`), and a qualified call to a private function
+  fails wherever it is — another file, a sibling module in the same
+  file, or the target's own module (`S.b()` / `__MODULE__.b()` inside
+  `S` is a remote call). In-module qualified self-calls are reported,
+  not rewritten to local calls: they're often deliberate (hot code
+  upgrade, mocking), so the user decides. Each ref carries
+  `in_module` to tell the cases apart. Bare local calls (`b()`) are
+  never reported and don't block.
 
   Definitions in modules `find-callers` can't search for (an atom like
   `defmodule :erlang_style`, or a dynamically built name) are refused
@@ -121,14 +124,14 @@ defmodule Adze.ExtractPrivate do
   @spec extract_private(String.t(), opts()) :: {:ok, result()} | {:error, term()}
   def extract_private(source, opts) when is_binary(source) and is_list(opts) do
     with {:ok, def_spec} <- fetch_opt(opts, :definition),
-         {:ok, path} <- fetch_opt(opts, :path),
+         {:ok, _path} <- fetch_opt(opts, :path),
          {:ok, definition} <- find_definition(source, def_spec, opts),
          {:ok, to_kind} <- flip_kind(definition.kind),
          :ok <- ensure_public(definition),
          :ok <- ensure_searchable_module(definition),
          :ok <- ensure_not_callback(source, definition, opts),
          {:ok, fc_result} <- run_find_callers(definition, opts),
-         {:ok, externals} <- classify_external(fc_result, path, definition),
+         {:ok, externals} <- classify_external(fc_result),
          :ok <- check_no_externals(externals) do
       new_source = flip_clauses(source, definition, to_kind)
 
@@ -376,19 +379,20 @@ defmodule Adze.ExtractPrivate do
     FindCallers.find_callers(target, fc_opts)
   end
 
-  # `find-callers` already attaches `in_module` to each ref (the
-  # innermost enclosing `defmodule` at the ref's line). A ref is
-  # "internal" iff it's in the same file *and* its `in_module` is the
-  # target's module — that catches sibling-module-in-same-file refs as
-  # external while leaving in-module refs alone.
-  defp classify_external(fc_result, source_path, %Definition{module: source_module}) do
+  # Every ref `find-callers` reports is a *qualified* reference
+  # (`Mod.fun(...)`, `&Mod.fun/n`, `x |> Mod.fun`, `__MODULE__.fun(...)`)
+  # — it never reports bare local calls. A qualified call to a private
+  # function fails no matter where it sits, including inside the
+  # module itself (`S.b()` / `__MODULE__.b()` within `S` is a remote
+  # call), so every ref blocks the flip. We don't rewrite in-module
+  # ones to local calls: a qualified self-call is often deliberate
+  # (hot code upgrade in a receive loop, mocking/tracing), and making
+  # it local would silently change semantics. `in_module` stays on
+  # each ref so the user can tell self-references from other modules.
+  defp classify_external(fc_result) do
     externals =
-      fc_result.files
-      |> Enum.flat_map(fn {path, refs} ->
+      Enum.flat_map(fc_result.files, fn {path, refs} ->
         Enum.map(refs, &Map.put(&1, :path, path))
-      end)
-      |> Enum.reject(fn r ->
-        same_file?(r.path, source_path) and r.in_module == source_module
       end)
 
     {:ok, externals}
@@ -396,12 +400,6 @@ defmodule Adze.ExtractPrivate do
 
   defp check_no_externals([]), do: :ok
   defp check_no_externals(externals), do: {:error, {:external_callers, externals}}
-
-  # Normalize both sides so a relative path from Igniter's rewrite root
-  # compares equal to the same relative path the caller passed in via
-  # `--file`. `Path.expand/1` resolves `.`/`..` and absolutizes against
-  # cwd — it does not require the path to exist.
-  defp same_file?(a, b), do: Path.expand(a) == Path.expand(b)
 
   defp range_of(node) do
     case Sourceror.get_range(node) do
