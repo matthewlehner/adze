@@ -309,9 +309,14 @@ defmodule Adze.FindCallers do
        when is_atom(fun) do
     arity = unwrap_int(arity_ast)
 
-    if match_call(mod_parts(mod_ast), fun, arity, acc.aliases, target, acc.scope),
-      do: {node, push_ref(acc, node, :capture, arity, lines)},
-      else: {node, acc}
+    acc =
+      if match_call(mod_parts(mod_ast), fun, arity, acc.aliases, target, acc.scope),
+        do: push_ref(acc, node, :capture, arity, lines),
+        else: acc
+
+    # Replace the capture with a leaf so the walk doesn't descend into
+    # its inner `Mod.fun` node and report it again as a zero-arity call.
+    {:ok, acc}
   end
 
   # Direct qualified call: Mod.fun(args)

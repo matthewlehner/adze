@@ -233,6 +233,20 @@ defmodule Adze.FindCallersTest do
       assert c.kind == :capture
       assert c.arity == 2
     end
+
+    test "a capture is not also counted as a zero-arity call" do
+      files = %{
+        "lib/x.ex" => """
+        defmodule X do
+          def go, do: Enum.map([1], &MyApp.Foo.bar/1)
+        end
+        """
+      }
+
+      assert {:ok, %{total: 0}} = FindCallers.find_callers("MyApp.Foo.bar/0", files: files)
+
+      assert {:ok, %{total: 1}} = FindCallers.find_callers("MyApp.Foo.bar/1", files: files)
+    end
   end
 
   describe "find_callers/2 — alias resolution" do
