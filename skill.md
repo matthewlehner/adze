@@ -134,6 +134,26 @@ external callers across the project.
 3. If the same def name exists in multiple `defmodule`s in the source
    file, pass `--from-module Foo.Mod` to disambiguate.
 
+**Refusals** (extract stops instead of writing code that won't compile):
+
+- The extracted code calls a public or private `defmacro` / `defguard`
+  that stays in the source (`private_macro_referenced`). The target
+  would need `require Source`.
+- The target is a `defmacro` / `defguard` that the source or another
+  file still calls (`moved_macro_referenced`). Callers would need
+  `require Target`.
+- Another file does `import Source` (or `use Source` whose `__using__`
+  contains an `import`) and could call a moved def (`imported_by`).
+  Bare calls can't be retargeted. Switch them to qualified calls first.
+  Literal `only:` / `except:` lists and `only: :macros | :functions`
+  are honoured.
+
+**Known gap:** imports injected any other way (a helper called from
+`__using__`, chained `use`, dynamically built `import`) aren't detected.
+Extraction goes through and the bare call fails to compile. After
+`extract!`, run `mix compile --warnings-as-errors` and look for
+"undefined function" at bare calls of the moved def.
+
 ### `rename` / `rename!` — module-wide rename
 
 ```bash
