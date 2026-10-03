@@ -14,6 +14,10 @@ defmodule Adze.Move do
     * `--before` is the only supported anchor (no `--after`).
     * `mv/2` is pure (returns the diff + new source). `mv!/2` writes the
       file.
+    * The file is not reformatted. The moved lines are spliced in as
+      written, so the diff is exactly the move: no `field :name,
+      :string` → `field(:name, :string)` churn from formatter defaults,
+      and unrelated code is left untouched.
 
   ## Usage
 
@@ -41,10 +45,9 @@ defmodule Adze.Move do
          {:ok, src_def} <- find_labeled(source, def_spec, opts, :definition),
          {:ok, tgt_def} <- find_labeled(source, before_spec, opts, :before),
          :ok <- check_not_self(src_def, tgt_def),
-         :ok <- check_same_module(src_def, tgt_def),
-         moved = perform_move(source, src_def, tgt_def),
-         {:ok, formatted} <- reformat(moved) do
-      {:ok, %{diff: Adze.Diff.unified(source, formatted), new_source: formatted}}
+         :ok <- check_same_module(src_def, tgt_def) do
+      moved = perform_move(source, src_def, tgt_def)
+      {:ok, %{diff: Adze.Diff.unified(source, moved), new_source: moved}}
     end
   end
 
@@ -108,56 +111,51 @@ defmodule Adze.Move do
 
   # --- move (line-based slice/cut/paste) ---------------------------------
 
+  # Line-based, no reformatting: each `Definition.range` covers whole
+  # source lines from the earliest leading comment / attribute to the
+  # last clause's `end`, and defs in a module body sit on their own
+  # lines with the module's indentation, so cutting and pasting lines is
+  # enough.
+  #
+  # Blank-line separators are handled here rather than by a formatter
+  # pass. If the block was blank-separated from its neighbours, one
+  # adjacent blank goes with it (the one below, or above when it's the
+  # last def) and one is put back below it at the destination. A block
+  # in a tight group (`def a, do: 1` / `def b, do: 2`) moves with no
+  # blank either way.
   defp perform_move(source, src_def, tgt_def) do
-    # Line-based: each Definition.range covers full source lines from the
-    # earliest leading comment to the last clause's `end`. Defs live on
-    # their own lines inside a defmodule body, so slicing by line is
-    # both simpler than Sourceror.Patch and includes the right
-    # whitespace/indentation for the paste.
-    #
-    # We extend the slice to also grab the conventional blank line that
-    # follows a def. Without that the cut/paste destroys blank separators
-    # between adjacent defs and the formatter can't restore them.
     lines = String.split(source, "\n")
 
-    raw_src_start = src_def.range.start[:line] - 1
-    raw_src_end = src_def.range.end[:line] - 1
+    src_start = src_def.range.start[:line] - 1
+    src_end = src_def.range.end[:line] - 1
     tgt_start = tgt_def.range.start[:line] - 1
 
-    src_end = extend_trailing_blank(lines, raw_src_end)
-    block_len = src_end - raw_src_start + 1
+    block = Enum.slice(lines, src_start..src_end)
 
-    src_lines = Enum.slice(lines, raw_src_start..src_end)
+    {cut_start, cut_end, separated?} =
+      cond do
+        blank_at?(lines, src_end + 1) -> {src_start, src_end + 1, true}
+        blank_at?(lines, src_start - 1) -> {src_start - 1, src_end, true}
+        true -> {src_start, src_end, false}
+      end
 
-    {before_src, rest} = Enum.split(lines, raw_src_start)
-    {_dropped, after_src} = Enum.split(rest, block_len)
-    cut = before_src ++ after_src
+    cut_len = cut_end - cut_start + 1
+    {before_cut, rest} = Enum.split(lines, cut_start)
+    remaining = before_cut ++ Enum.drop(rest, cut_len)
 
-    adjusted_tgt =
-      if raw_src_start < tgt_start, do: tgt_start - block_len, else: tgt_start
+    insert_at = if cut_start < tgt_start, do: tgt_start - cut_len, else: tgt_start
+    insert = if separated?, do: block ++ [""], else: block
 
-    {pre, post} = Enum.split(cut, adjusted_tgt)
-    Enum.join(pre ++ src_lines ++ post, "\n")
+    {pre, post} = Enum.split(remaining, insert_at)
+    Enum.join(pre ++ insert ++ post, "\n")
   end
 
-  defp extend_trailing_blank(lines, end_idx) do
-    case Enum.at(lines, end_idx + 1) do
-      nil -> end_idx
-      line -> if blank?(line), do: end_idx + 1, else: end_idx
+  defp blank_at?(_lines, idx) when idx < 0, do: false
+
+  defp blank_at?(lines, idx) do
+    case Enum.at(lines, idx) do
+      nil -> false
+      line -> String.trim(line) == ""
     end
-  end
-
-  defp blank?(line), do: String.trim(line) == ""
-
-  defp reformat(source) do
-    formatted =
-      source
-      |> Code.format_string!()
-      |> IO.iodata_to_binary()
-
-    result = if String.ends_with?(formatted, "\n"), do: formatted, else: formatted <> "\n"
-    {:ok, result}
-  rescue
-    e -> {:error, {:format, e}}
   end
 end

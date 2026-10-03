@@ -296,6 +296,90 @@ defmodule AdzeMoveTest do
     end
   end
 
+  describe "mv/2 — no reformatting" do
+    test "macro calls without parens and unrelated code are left as written" do
+      source = """
+      defmodule MyApp.User do
+        use Ecto.Schema
+
+        schema "users" do
+          field :name, :string
+          field :age,    :integer
+        end
+
+        def a, do: :a
+
+        def b(x),   do: [x,x]
+
+        def c, do: :c
+      end
+      """
+
+      {:ok, result} = Move.mv(source, definition: "c/0", before: "a/0")
+
+      assert result.new_source == """
+             defmodule MyApp.User do
+               use Ecto.Schema
+
+               schema "users" do
+                 field :name, :string
+                 field :age,    :integer
+               end
+
+               def c, do: :c
+
+               def a, do: :a
+
+               def b(x),   do: [x,x]
+             end
+             """
+    end
+
+    test "moving the first def keeps one blank between every def" do
+      source = """
+      defmodule X do
+        def a, do: :a
+
+        def b, do: :b
+
+        def c, do: :c
+      end
+      """
+
+      {:ok, result} = Move.mv(source, definition: "a/0", before: "c/0")
+
+      assert result.new_source == """
+             defmodule X do
+               def b, do: :b
+
+               def a, do: :a
+
+               def c, do: :c
+             end
+             """
+    end
+
+    test "a tight group stays tight" do
+      source = """
+      defmodule X do
+        def first, do: 1
+        def middle, do: 2
+        def last, do: 3
+      end
+      """
+
+      {:ok, result} = Move.mv(source, definition: "last/0", before: "first/0")
+
+      assert result.new_source == """
+             defmodule X do
+               def last, do: 3
+               def first, do: 1
+               def middle, do: 2
+             end
+             """
+    end
+  end
+
   describe "mv_file/2 + mv!/2" do
     @tmpdir System.tmp_dir!()
 
