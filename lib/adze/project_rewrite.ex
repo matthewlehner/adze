@@ -812,38 +812,95 @@ defmodule Adze.ProjectRewrite do
   """
   @spec write(t()) :: :ok | {:error, term()}
   def write(%__MODULE__{} = rewrite) do
-    write!(rewrite)
+    guard_writable!(rewrite)
+
+    case do_write(rewrite) do
+      :ok -> :ok
+      {:error, reason} -> {:error, {:file_write, reason}}
+    end
   rescue
     e in [File.Error, File.RenameError] -> {:error, {:file_write, e.reason}}
   end
 
   @doc """
   Flush the rewrite to disk. Refuses to write when the rewrite is in
-  test mode or carries unresolved issues.
+  test mode or carries unresolved issues. Raises `RuntimeError` when
+  any file cannot be written (e.g. it changed on disk after being
+  read); files already written are restored first.
   """
   @spec write!(t()) :: :ok
-  def write!(%__MODULE__{test?: true}) do
+  def write!(%__MODULE__{} = rewrite) do
+    guard_writable!(rewrite)
+
+    case do_write(rewrite) do
+      :ok -> :ok
+      {:error, reason} -> raise "ProjectRewrite.write!/1 failed: #{inspect(reason)}"
+    end
+  end
+
+  defp guard_writable!(%__MODULE__{test?: true}) do
     raise ArgumentError,
           "ProjectRewrite.write!/1 is unsupported on a test-mode rewrite. " <>
             "Use Igniter.Test.apply_igniter/1 for assertions."
   end
 
-  def write!(%__MODULE__{igniter: %Igniter{issues: [_ | _] = issues}}) do
+  defp guard_writable!(%__MODULE__{igniter: %Igniter{issues: [_ | _] = issues}}) do
     raise ArgumentError,
           "Refusing to write — Igniter has issues: #{Enum.join(issues, "; ")}"
   end
 
-  def write!(%__MODULE__{igniter: igniter, root: root}) do
+  defp guard_writable!(_), do: :ok
+
+  # All-or-nothing: snapshot every file we're about to touch, and on
+  # any failure restore the snapshot so a partial write never lingers.
+  defp do_write(%__MODULE__{igniter: igniter, root: root}) do
     in_dir(root, fn ->
       prepped = Igniter.prepare_for_write(igniter)
-      {:ok, _} = Rewrite.write_all(prepped.rewrite)
 
-      Enum.each(prepped.moves, fn {from, to} ->
-        File.mkdir_p!(Path.dirname(to))
-        if File.exists?(from), do: File.rename!(from, to)
-      end)
+      snapshot =
+        prepped.rewrite
+        |> Rewrite.sources()
+        |> Enum.filter(&Igniter.changed?/1)
+        |> Enum.map(& &1.path)
+        |> Enum.concat(Enum.flat_map(prepped.moves, fn {from, to} -> [from, to] end))
+        |> Enum.uniq()
+        |> Map.new(fn path ->
+          case File.read(path) do
+            {:ok, content} -> {path, content}
+            {:error, _} -> {path, nil}
+          end
+        end)
 
-      :ok
+      try do
+        case Rewrite.write_all(prepped.rewrite) do
+          {:ok, _} ->
+            Enum.each(prepped.moves, fn {from, to} ->
+              File.mkdir_p!(Path.dirname(to))
+              if File.exists?(from), do: File.rename!(from, to)
+            end)
+
+            :ok
+
+          {:error, errors, _rewrite} ->
+            restore(snapshot)
+            {:error, Enum.map(errors, &error_reason/1)}
+        end
+      rescue
+        e in [File.Error, File.RenameError] ->
+          restore(snapshot)
+          {:error, e.reason}
+      end
+    end)
+  end
+
+  defp error_reason(%{reason: reason, path: path}), do: {path, reason}
+  defp error_reason(%{reason: reason}), do: reason
+  defp error_reason(other), do: other
+
+  defp restore(snapshot) do
+    Enum.each(snapshot, fn
+      {path, nil} -> File.rm(path)
+      {path, content} -> File.write(path, content)
     end)
   end
 

@@ -171,7 +171,7 @@ defmodule Adze.CLI do
         die("could not read #{args.file}: #{:file.format_error(reason)}")
 
       {:error, {:file_write, reason}} ->
-        die("could not write #{args.file}: #{:file.format_error(reason)}")
+        die("could not write #{args.file}: #{format_write_error(reason)}")
 
       {:error, {:parse, reason}} ->
         die("parse error: #{inspect(reason)}")
@@ -322,7 +322,7 @@ defmodule Adze.CLI do
         die("parse error: #{inspect(reason)}")
 
       {:error, {:file_write, reason}} ->
-        die("could not write #{file}: #{:file.format_error(reason)}")
+        die("could not write #{file}: #{format_write_error(reason)}")
 
       {:error, {:format, exception}} ->
         die("formatting failed after the move: #{Exception.message(exception)}")
@@ -377,7 +377,7 @@ defmodule Adze.CLI do
         die("could not read #{args.file}: #{:file.format_error(reason)}")
 
       {:error, {:file_write, reason}} ->
-        die("could not write: #{:file.format_error(reason)}")
+        die("could not write: #{format_write_error(reason)}")
 
       {:error, {:format, exception}} ->
         die("formatting failed after the extract: #{Exception.message(exception)}")
@@ -489,7 +489,7 @@ defmodule Adze.CLI do
         die(format_surviving_error(refs))
 
       {:error, {:file_write, reason}} ->
-        die("could not write: #{:file.format_error(reason)}")
+        die("could not write: #{format_write_error(reason)}")
 
       {:error, reason} ->
         die("rename failed: #{inspect(reason)}")
@@ -609,6 +609,28 @@ defmodule Adze.CLI do
   rescue
     ArgumentError -> op
   end
+
+  # `{:file_write, reason}` carries a POSIX atom from a single
+  # `File.write`, or — from `ProjectRewrite.write/1`, after it rolled
+  # back — a list of per-file reasons (`{path, reason}` or a bare
+  # reason; Rewrite adds `:changed` when a file was modified on disk
+  # after it was read).
+  defp format_write_error(reasons) when is_list(reasons),
+    do: Enum.map_join(reasons, "; ", &format_write_error/1)
+
+  defp format_write_error({path, reason}) when is_binary(path),
+    do: "#{path}: #{format_write_error(reason)}"
+
+  defp format_write_error(:changed), do: "file changed on disk since it was read"
+
+  defp format_write_error(reason) when is_atom(reason) do
+    case to_string(:file.format_error(reason)) do
+      "unknown POSIX error" <> _ -> inspect(reason)
+      message -> message
+    end
+  end
+
+  defp format_write_error(other), do: inspect(other)
 
   defp die(msg) do
     IO.puts(:stderr, msg)
