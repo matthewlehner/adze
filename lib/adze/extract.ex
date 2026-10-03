@@ -77,7 +77,29 @@ defmodule Adze.Extract do
       reported in `promoted_in_source`. Shared `defmacrop` / `defguardp`
       helpers are refused with `{:error, {:private_macro_referenced,
       %{definitions: [{kind, name, arity}], source: module}}}` — they'd
-      also need a `require` in the target.
+      also need a `require` in the target. Public `defmacro` /
+      `defguard` helpers that stay in the source are refused the same
+      way, for the same reason.
+    * **Macros and guards that move are refused if anyone calls them.**
+      A moved public `defmacro` / `defguard` can't be reached as
+      `Target.m(x)` without `require Target`, which adze doesn't insert.
+      If the source module or any other file calls it, extract returns
+      `{:error, {:moved_macro_referenced, %{definitions:, source:,
+      callers:}}}`. Uncalled macros move fine.
+    * **Importers are refused.** Calls through `import Source` are bare
+      (`inner(x)`) and can't be retargeted. If another file imports the
+      source and the import could cover a moved def, extract returns
+      `{:error, {:imported_by, %{definitions:, source:, files:}}}`.
+      Literal `only:` / `except:` lists and `only: :macros | :functions`
+      are honoured. `use Source` counts as an import only when
+      `Source`'s `__using__` contains a literal `import`.
+
+      **Known gap:** imports injected any other way — a helper called
+      from `__using__`, a nested `use` chain, or `import` built
+      dynamically — aren't seen, and the extraction will go through and
+      fail to compile at the bare call. Qualify those calls first, or
+      compile after extracting. Dynamic `only:`/`except:` values are
+      treated as importing everything (a safe over-refusal).
 
   ## `extract!` writes both files
 

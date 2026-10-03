@@ -5,6 +5,23 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+
+- `extract`: cross-file pipes whose real arity stays in the source are no
+  longer rewritten.
+- `extract`: refuses (instead of emitting uncompilable code) when the
+  closure calls a public macro/guard that stays behind, when a moved
+  macro/guard still has callers, or when another file `import`s / `use`s
+  the source and could call a moved def.
+- `deps`: calls in `when` guards now count as calls from the clause.
+
+### Known limitations
+
+- `extract` only detects `use Source` as an import when `__using__`
+  contains a literal `import`; other injected imports are not seen.
+
 ## [0.1.0] - 2026-05-22
 
 ### Added
