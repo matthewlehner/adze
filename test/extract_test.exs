@@ -1632,6 +1632,111 @@ defmodule AdzeExtractTest do
       assert caller_diff =~ "MyApp.PublicEntry"
     end
 
+    test "leaves a cross-file pipe alone when its effective arity stays in the source" do
+      files = %{
+        "lib/source.ex" => """
+        defmodule MyApp.Source do
+          def foo(x), do: x * 2
+          def foo(x, y), do: x + y
+        end
+        """,
+        "lib/caller.ex" => """
+        defmodule MyApp.Caller do
+          alias MyApp.Source, as: S
+          def a(v), do: v |> S.foo(2)
+          def b(v), do: v |> S.foo()
+        end
+        """
+      }
+
+      {:ok, result} =
+        Extract.extract_file("lib/source.ex",
+          definition: "foo/1",
+          module: "MyApp.Foo",
+          files: files
+        )
+
+      diff = result.caller_diffs["lib/caller.ex"]
+      assert diff, "expected caller file to be touched"
+      refute diff =~ "Foo.foo(2)"
+      assert diff =~ "v |> MyApp.Foo.foo()"
+      refute diff =~ "adze_keep"
+    end
+
+    test "cross-file pipe protection works for names ending in ? or !" do
+      files = %{
+        "lib/source.ex" => """
+        defmodule MyApp.Source do
+          def ok?(x), do: x > 0
+          def ok?(x, y), do: x > y
+        end
+        """,
+        "lib/caller.ex" => """
+        defmodule MyApp.Caller do
+          alias MyApp.Source, as: S
+          def a(v), do: v |> S.ok?(2)
+          def b(v), do: v |> S.ok?()
+        end
+        """
+      }
+
+      {:ok, result} =
+        Extract.extract_file("lib/source.ex",
+          definition: "ok?/1",
+          module: "MyApp.Ok",
+          files: files
+        )
+
+      diff = result.caller_diffs["lib/caller.ex"]
+      assert diff, "expected caller file to be touched"
+      refute diff =~ "Ok.ok?(2)"
+      assert diff =~ "v |> MyApp.Ok.ok?()"
+      refute diff =~ "adze_keep"
+    end
+
+    # `mix format` never splits a call after the dot, but unformatted code
+    # can. The marker must land on the function name, wherever it sits —
+    # not at an offset from the dot, which here points past the end of
+    # the dot's line and turned the call into `S.()` followed by a
+    # separate `foo(2)`.
+    test "cross-file pipe protection when the call is split after the dot" do
+      files = %{
+        "lib/source.ex" => """
+        defmodule MyApp.Source do
+          def foo(x), do: x * 2
+          def foo(x, y), do: x + y
+        end
+        """,
+        "lib/caller.ex" => """
+        defmodule MyApp.Caller do
+          alias MyApp.Source, as: S
+
+          def a(v) do
+            v |> S.
+              foo(2)
+          end
+
+          def b(v), do: v |> S.foo()
+        end
+        """
+      }
+
+      {:ok, result} =
+        Extract.extract_file("lib/source.ex",
+          definition: "foo/1",
+          module: "MyApp.Foo",
+          files: files
+        )
+
+      diff = result.caller_diffs["lib/caller.ex"]
+      assert diff, "expected caller file to be touched"
+      refute diff =~ "S.()"
+      refute diff =~ "Foo.foo(2)"
+      refute diff =~ "Foo.\n"
+      assert diff =~ "v |> MyApp.Foo.foo()"
+      refute diff =~ "adze_keep"
+    end
+
     test "rewrites callers using a default-argument arity" do
       files = %{
         "lib/source.ex" => ~S"""

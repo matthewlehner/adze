@@ -332,17 +332,29 @@ defmodule Adze.Extract do
     source_mod = string_to_module(single.source_module)
     target_mod = string_to_module(single.target_module)
 
-    {:ok,
-     Enum.reduce(single.public_closure_keys, rewrite, fn {name, arity} = key, rw ->
-       arities = Map.get(single.call_site_arities, key, [arity])
+    # Igniter matches the written arity, so `v |> S.foo(2)` (really
+    # foo/2) would be taken for foo/1. Shield those calls first.
+    allowed =
+      Enum.reduce(single.public_closure_keys, %{}, fn {name, arity} = key, acc ->
+        arities = Map.get(single.call_site_arities, key, [arity])
+        Map.update(acc, name, arities, &Enum.uniq(&1 ++ arities))
+      end)
 
-       {:ok, rw} =
-         ProjectRewrite.rename_function(rw, {source_mod, name}, {target_mod, name},
-           arity: arities
-         )
+    rewrite = ProjectRewrite.protect_piped_calls(rewrite, allowed)
 
-       rw
-     end)}
+    rewrite =
+      Enum.reduce(single.public_closure_keys, rewrite, fn {name, arity} = key, rw ->
+        arities = Map.get(single.call_site_arities, key, [arity])
+
+        {:ok, rw} =
+          ProjectRewrite.rename_function(rw, {source_mod, name}, {target_mod, name},
+            arity: arities
+          )
+
+        rw
+      end)
+
+    {:ok, ProjectRewrite.unprotect_calls(rewrite)}
   end
 
   defp string_to_module(str) when is_binary(str), do: Module.concat(String.split(str, "."))

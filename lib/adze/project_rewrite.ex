@@ -496,6 +496,150 @@ defmodule Adze.ProjectRewrite do
     {:ok, %{rewrite | igniter: igniter}}
   end
 
+  @keep_marker "__adze_keep__"
+
+  @doc """
+  Shield piped remote calls whose real arity (written args + the piped
+  one) is not in `allowed` from a following `rename_function` pass.
+
+  Igniter matches the *written* arity, so `v |> S.foo(2)` (really
+  `foo/2`) looks like `foo/1`. `allowed` maps function name to the list
+  of real arities that are being moved. Matching calls get a marker
+  inserted into the function name (before a trailing `?`/`!`); `unprotect_calls/1` removes it.
+  """
+  @spec protect_piped_calls(t(), %{atom() => [non_neg_integer()]}) :: t()
+  def protect_piped_calls(%__MODULE__{} = rewrite, allowed) when is_map(allowed) do
+    map_elixir_sources(rewrite, fn content ->
+      case protect_edits(content, allowed) do
+        {_, []} -> content
+        edits -> apply_insertions(edits)
+      end
+    end)
+  end
+
+  @doc "Undo `protect_piped_calls/2`."
+  @spec unprotect_calls(t()) :: t()
+  def unprotect_calls(%__MODULE__{} = rewrite) do
+    map_elixir_sources(rewrite, fn content ->
+      String.replace(content, @keep_marker, "")
+    end)
+  end
+
+  defp map_elixir_sources(%__MODULE__{igniter: igniter} = rewrite, fun) do
+    Enum.reduce(Rewrite.sources(igniter.rewrite), rewrite, fn source, rw ->
+      path = Rewrite.Source.get(source, :path)
+
+      if String.ends_with?(path, [".ex", ".exs"]) do
+        content = Rewrite.Source.get(source, :content)
+
+        case fun.(content) do
+          ^content -> rw
+          new -> put_source(rw, Rewrite.Source.update(source, :content, new))
+        end
+      else
+        rw
+      end
+    end)
+  end
+
+  # Charlist indexes at which to insert the marker, for piped remote
+  # calls with a real arity outside `allowed`. The charlist and line
+  # index are only built once a candidate pipe turns up.
+  defp protect_edits(content, allowed) do
+    with {:ok, ast} <- Code.string_to_quoted(content, columns: true, token_metadata: true),
+         [_ | _] = candidates <- candidate_calls(ast, allowed) do
+      chars = String.to_charlist(content)
+      line_starts = line_starts(chars)
+
+      idxs =
+        for {name, line, col} <- candidates,
+            {:ok, start} <- [Map.fetch(line_starts, line)],
+            {:ok, idx} <- [name_index(chars, start + col, name)],
+            uniq: true,
+            do: idx + marker_offset(name)
+
+      {chars, idxs}
+    else
+      _ -> {[], []}
+    end
+  end
+
+  # `{name, line, col}` of the dot in each piped remote call whose real
+  # arity is outside `allowed`.
+  defp candidate_calls(ast, allowed) do
+    {_, acc} =
+      Macro.prewalk(ast, [], fn
+        {:|>, _, [_lhs, {{:., dot_meta, [_mod, name]}, _, args}]} = node, acc
+        when is_atom(name) and is_list(args) ->
+          with %{^name => arities} <- allowed,
+               false <- (length(args) + 1) in arities,
+               line when is_integer(line) <- dot_meta[:line],
+               col when is_integer(col) <- dot_meta[:column] do
+            {node, [{name, line, col} | acc]}
+          else
+            _ -> {node, acc}
+          end
+
+        node, acc ->
+          {node, acc}
+      end)
+
+    acc
+  end
+
+  # Map of line number => charlist index of its first character.
+  defp line_starts(chars) do
+    {starts, _, _} =
+      chars
+      |> Enum.reduce({%{1 => 0}, 0, 1}, fn
+        ?\n, {m, i, l} -> {Map.put(m, l + 1, i + 1), i + 1, l + 1}
+        _, {m, i, l} -> {m, i + 1, l}
+      end)
+
+    starts
+  end
+
+  # `dot_idx` is the index just past the dot (columns are 1-based). The
+  # name may follow on a later line, after whitespace or comments.
+  defp name_index(chars, dot_idx, name) do
+    rest = Enum.drop(chars, dot_idx - 1)
+
+    case rest do
+      [?. | after_dot] -> find_name(after_dot, dot_idx, Atom.to_charlist(name))
+      _ -> :error
+    end
+  end
+
+  defp find_name([c | rest], idx, name) when c in [?\s, ?\t, ?\n, ?\r],
+    do: find_name(rest, idx + 1, name)
+
+  defp find_name([?# | rest], idx, name) do
+    {comment, tail} = Enum.split_while(rest, &(&1 != ?\n))
+    find_name(tail, idx + 1 + length(comment), name)
+  end
+
+  defp find_name(rest, idx, name) do
+    if List.starts_with?(rest, name), do: {:ok, idx}, else: :error
+  end
+
+  # Where the marker goes, relative to the start of the name. It must sit
+  # before a trailing `?`/`!` -- `foo?__adze_keep__` would not parse.
+  defp marker_offset(name) do
+    str = Atom.to_string(name)
+    len = String.length(str)
+    if String.ends_with?(str, ["?", "!"]), do: len - 1, else: len
+  end
+
+  defp apply_insertions({chars, idxs}) do
+    idxs
+    |> Enum.sort(:desc)
+    |> Enum.reduce(chars, fn idx, chars ->
+      {before, rest} = Enum.split(chars, idx)
+      before ++ String.to_charlist(@keep_marker) ++ rest
+    end)
+    |> List.to_string()
+  end
+
   defp clear_included_flag(%Igniter{assigns: assigns} = igniter) do
     case assigns[:private] do
       %{} = private ->
