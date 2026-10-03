@@ -694,4 +694,96 @@ defmodule AdzeDefinitionTest do
       assert d.module == "Outer"
     end
   end
+
+  describe "fragility" do
+    test "find ignores an ambiguous attribute on an unrelated def" do
+      source = """
+      defmodule X do
+        @spec bad() :: :ok
+        @some_const 1
+        def bad, do: :ok
+
+        def good, do: :ok
+      end
+      """
+
+      assert {:ok, %{name: :good}} = Definition.find(source, "good/0")
+      assert {:error, {:ambiguous_attribute, _}} = Definition.find(source, "bad/0")
+      assert {:error, {:ambiguous_attribute, _}} = Definition.list(source)
+      assert {:ok, defs} = Definition.list(source, lenient: true)
+      assert [:bad] = for(d <- defs, d.ambiguous, do: d.name)
+    end
+
+    test "def unquote(name)() has no static name (nil)" do
+      source = """
+      defmodule X do
+        def unquote(:x)(), do: 1
+        def y, do: 2
+      end
+      """
+
+      assert {:ok, defs} = Definition.list(source)
+      assert Enum.map(defs, & &1.name) == [nil, :y]
+    end
+  end
+
+  # The `:unknown` placeholder for `def unquote(...)` heads is a real atom, so it
+  # collides with a def literally named `unknown` and with other unquoted defs.
+  describe "unquoted def names" do
+    test "find \"unknown/1\" returns the real def, not an unquoted one" do
+      source = """
+      defmodule X do
+        def unquote(:dyn)(a), do: a
+        def unknown(a), do: {:real, a}
+      end
+      """
+
+      assert {:ok, d} = Definition.find(source, "unknown/1")
+      assert Macro.to_string(hd(d.parts.clauses)) =~ "def unknown"
+    end
+
+    test "adjacent unquoted defs are not grouped as one multi-clause def" do
+      source = """
+      defmodule X do
+        def unquote(:a)(x), do: x
+        def unquote(:b)(x), do: x
+        def y, do: 1
+      end
+      """
+
+      assert {:ok, defs} = Definition.list(source)
+      assert length(defs) == 3
+    end
+
+    test "a fully unquoted head is not a def named unquote/1" do
+      source = """
+      defmodule X do
+        def unquote(head), do: 1
+      end
+      """
+
+      assert {:ok, defs} = Definition.list(source)
+      refute Enum.any?(defs, &(&1.name == :unquote))
+      assert {:error, :not_found} = Definition.find(source, "unquote/1")
+    end
+
+    # `nil` is an atom, so the tuple-spec form `{nil, arity}` passes the
+    # `is_atom(name)` guard and addresses the unquoted def directly.
+    test "a {nil, arity} tuple spec is rejected" do
+      source = """
+      defmodule X do
+        def unquote(:dyn)(), do: 1
+      end
+      """
+
+      assert {:error, {:bad_definition_spec, {nil, 0}}} =
+               Definition.parse_definition_spec({nil, 0})
+
+      assert {:error, _} = Definition.find(source, {nil, 0})
+    end
+
+    test "resolve_key/2 leaves a nil-named key unchanged instead of crashing" do
+      assert {nil, 0} = Definition.resolve_key({nil, 0}, [])
+    end
+  end
 end

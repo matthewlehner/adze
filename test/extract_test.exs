@@ -2225,4 +2225,76 @@ defmodule AdzeExtractTest do
                )
     end
   end
+
+  describe "extract/2 — attribute ambiguity and unquoted names" do
+    test "rewriting an ambiguous surviving caller keeps its intervening attribute" do
+      # `caller/1` is ambiguous (@doc, then @limit, then the def) and gets
+      # re-rendered to qualify `target(x)`. The re-render replaces the
+      # group's whole line range with attrs ++ clauses, so `@limit 10`,
+      # which isn't in either, disappears and `@limit` silently becomes nil.
+      source = """
+      defmodule MyApp.S do
+        def target(x), do: x
+
+        @doc "calls target"
+        @limit 10
+        def caller(x), do: target(x) + @limit
+      end
+      """
+
+      {:ok, result} =
+        Extract.extract(source,
+          definition: "target/1",
+          module: "MyApp.T",
+          path: "/tmp/__nonexistent_target__.ex"
+        )
+
+      assert result.new_source =~ "@limit 10"
+    end
+
+    test "extracting a real unknown/1 doesn't take an unquoted def with it" do
+      source = """
+      defmodule MyApp.S do
+        def unquote(:dyn)(x), do: x
+        def unknown(x), do: x
+      end
+      """
+
+      {:ok, result} =
+        Extract.extract(source,
+          definition: "unknown/1",
+          module: "MyApp.U",
+          path: "/tmp/__nonexistent_target__.ex"
+        )
+
+      refute result.target_content =~ "unquote"
+      assert result.new_source =~ "unquote(:dyn)"
+    end
+
+    test "rewriting an ambiguous caller doesn't duplicate its leading comment" do
+      # The clause-only rewrite replaces just the clause's lines, but the
+      # clause range excludes its leading comment while the rendered clause
+      # includes it, so the comment ends up in the output twice.
+      source = """
+      defmodule MyApp.S do
+        def target(x), do: x
+
+        @doc "calls target"
+        @limit 10
+        # explains caller
+        def caller(x), do: target(x) + @limit
+      end
+      """
+
+      {:ok, result} =
+        Extract.extract(source,
+          definition: "target/1",
+          module: "MyApp.T",
+          path: "/tmp/__nonexistent_target__.ex"
+        )
+
+      assert result.new_source =~ "@limit 10"
+      assert length(String.split(result.new_source, "# explains caller")) == 2
+    end
+  end
 end

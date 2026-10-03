@@ -674,7 +674,7 @@ defmodule Adze.Formatter do
       indent(depth),
       marker,
       " ",
-      to_string(name),
+      def_name_label(name),
       "/",
       Integer.to_string(arity),
       guard_str,
@@ -714,6 +714,10 @@ defmodule Adze.Formatter do
   end
 
   defp format_definition(_, _), do: []
+
+  # Unquoted defs (`def unquote(name)(...)`) have no static name.
+  defp def_name_label(nil), do: "unquote(…)"
+  defp def_name_label(name), do: to_string(name)
 
   defp indent(0), do: ""
   defp indent(n), do: String.duplicate("  ", n)

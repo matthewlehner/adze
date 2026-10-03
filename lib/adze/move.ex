@@ -81,10 +81,17 @@ defmodule Adze.Move do
 
   defp fetch_opt(opts, key) do
     case Keyword.fetch(opts, key) do
-      {:ok, v} when is_binary(v) -> {:ok, v}
-      {:ok, {name, arity}} when is_atom(name) and is_integer(arity) -> {:ok, {name, arity}}
-      {:ok, other} -> {:error, {:bad_opt, key, other}}
-      :error -> {:error, {:missing_opt, key}}
+      {:ok, v} when is_binary(v) ->
+        {:ok, v}
+
+      {:ok, {name, arity}} when is_atom(name) and not is_nil(name) and is_integer(arity) ->
+        {:ok, {name, arity}}
+
+      {:ok, other} ->
+        {:error, {:bad_opt, key, other}}
+
+      :error ->
+        {:error, {:missing_opt, key}}
     end
   end
 

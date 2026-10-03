@@ -153,11 +153,20 @@ defmodule Adze.Outline do
     {name, arity, true}
   end
 
+  # `def unquote(head)`: the whole head is unquoted. Checked before the
+  # normal-name clause so it isn't read as a def named `unquote/1`
+  # (matches `Adze.Definition`).
+  defp name_arity({:unquote, _, args}) when is_list(args), do: {nil, length(args), false}
+
   defp name_arity({name, _, args}) when is_atom(name) and is_list(args),
     do: {name, length(args), false}
 
   defp name_arity({name, _, nil}) when is_atom(name), do: {name, 0, false}
-  defp name_arity(_), do: {:unknown, 0, false}
+
+  # `def unquote(name)(...)`: name isn't static. Same `nil` as
+  # `Adze.Definition`, with the real arity.
+  defp name_arity({_, _, args}) when is_list(args), do: {nil, length(args), false}
+  defp name_arity(_), do: {nil, 0, false}
 
   # Names are shown as written; `__MODULE__.Inner` and other non-atom
   # parts fall through to the source snippet.

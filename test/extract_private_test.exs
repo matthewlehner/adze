@@ -696,4 +696,40 @@ defmodule Adze.ExtractPrivateTest do
       assert decoded["arity"] == 1
     end
   end
+
+  describe "unquoted def names" do
+    test "refuses to flip an unquoted def addressed as unknown/N" do
+      # The real name isn't statically known, so find-callers searched for
+      # `MyApp.S.unknown/1`, found nothing, and the flip went ahead.
+      source = """
+      defmodule MyApp.S do
+        def unquote(:dyn)(x), do: x
+      end
+      """
+
+      assert {:error, _} =
+               ExtractPrivate.extract_private(source,
+                 definition: "unknown/1",
+                 path: "lib/s.ex",
+                 files: %{"lib/s.ex" => source}
+               )
+    end
+
+    test "refuses to flip an unquoted def addressed as {nil, N}" do
+      # find-callers searches for function `nil`, matches nothing, and the
+      # flip goes ahead on a def whose callers were never checked.
+      source = """
+      defmodule MyApp.S do
+        def unquote(:dyn)(x), do: x
+      end
+      """
+
+      assert {:error, _} =
+               ExtractPrivate.extract_private(source,
+                 definition: {nil, 1},
+                 path: "lib/s.ex",
+                 files: %{"lib/s.ex" => source}
+               )
+    end
+  end
 end

@@ -418,6 +418,35 @@ defmodule AdzeMoveTest do
     end
   end
 
+  describe "mv/2 — unquoted def names" do
+    test "moving a real unknown/1 leaves an adjacent unquoted def in place" do
+      source = """
+      defmodule X do
+        def a, do: 1
+
+        def unknown(x), do: x
+
+        def unquote(:dyn)(x), do: x
+      end
+      """
+
+      {:ok, result} = Move.mv(source, definition: "unknown/1", before: "a/0")
+      # Only `unknown/1` moves; the unquoted def stays after `a/0`.
+      assert result.new_source =~ ~r/def a, do: 1\n\n  def unquote\(:dyn\)/
+    end
+
+    test "an unquoted def can't be moved via a {nil, N} tuple spec" do
+      source = """
+      defmodule X do
+        def a, do: 1
+        def unquote(:dyn)(), do: 1
+      end
+      """
+
+      assert {:error, _} = Move.mv(source, definition: {nil, 0}, before: {:a, 0})
+    end
+  end
+
   # --- helpers -----------------------------------------------------------
 
   # Extract {name, arity} of every def-family group in a module from the

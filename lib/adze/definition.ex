@@ -82,11 +82,11 @@ defmodule Adze.Definition do
   @attachable_attrs [:doc, :spec, :typedoc, :impl, :deprecated, :since]
   @consumer_attrs [:type, :typep, :opaque, :callback, :macrocallback]
 
-  defstruct [:module, :name, :arity, :kind, :visibility, :range, :nodes, :parts]
+  defstruct [:module, :name, :arity, :kind, :visibility, :range, :nodes, :parts, :ambiguous]
 
   @type t :: %__MODULE__{
           module: String.t(),
-          name: atom(),
+          name: atom() | nil,
           arity: non_neg_integer(),
           kind: atom(),
           visibility: :public | :private,
@@ -96,11 +96,12 @@ defmodule Adze.Definition do
             leading_comments: [map()],
             attributes: [{atom(), Macro.t()}],
             clauses: [Macro.t()]
-          }
+          },
+          ambiguous: nil | map()
         }
 
   @type definition_spec :: String.t() | {atom(), non_neg_integer()}
-  @type opts :: [include_attrs: [atom()]]
+  @type opts :: [include_attrs: [atom()], lenient: boolean()]
 
   @spec list_file(Path.t(), opts()) :: {:ok, [t()]} | {:error, term()}
   def list_file(path, opts \\ []) when is_binary(path) do
@@ -110,6 +111,15 @@ defmodule Adze.Definition do
     end
   end
 
+  @doc """
+  List every definition in `source`.
+
+  By default an ambiguous attribute anywhere in the file is an error.
+  With `lenient: true` the definitions are all returned and the ones
+  with an ambiguous attachment carry the error info in `:ambiguous`
+  (nil otherwise), so callers can fail only when the ambiguity touches
+  the definition they care about.
+  """
   @spec list(String.t(), opts()) :: {:ok, [t()]} | {:error, term()}
   def list(source, opts \\ []) when is_binary(source) do
     allowlist = effective_allowlist(opts)
@@ -117,7 +127,12 @@ defmodule Adze.Definition do
     case Sourceror.parse_string(source) do
       {:ok, ast} ->
         try do
-          {:ok, walk_modules(ast, "", [], allowlist)}
+          defs = walk_modules(ast, "", [], allowlist)
+
+          case {Keyword.get(opts, :lenient, false), Enum.find(defs, & &1.ambiguous)} do
+            {false, %__MODULE__{ambiguous: info}} -> {:error, {:ambiguous_attribute, info}}
+            _ -> {:ok, defs}
+          end
         catch
           {:ambiguous_attribute, info} -> {:error, {:ambiguous_attribute, info}}
         end
@@ -140,11 +155,12 @@ defmodule Adze.Definition do
           {:ok, t()} | {:error, :not_found} | {:error, term()}
   def find(source, spec, opts \\ []) when is_binary(source) do
     with {:ok, parsed} <- parse_definition_spec(spec),
-         {:ok, defs} <- list(source, opts) do
+         {:ok, defs} <- list(source, Keyword.put(opts, :lenient, true)) do
       key = resolve_key(parsed, defs)
 
       case Enum.find(defs, fn d -> {d.name, d.arity} == key end) do
         nil -> {:error, :not_found}
+        %__MODULE__{ambiguous: info} when info != nil -> {:error, {:ambiguous_attribute, info}}
         d -> {:ok, d}
       end
     end
@@ -191,7 +207,7 @@ defmodule Adze.Definition do
           {:ok, {atom() | String.t(), non_neg_integer()}}
           | {:error, {:bad_definition_spec, term()}}
   def parse_definition_spec({name, arity})
-      when is_atom(name) and is_integer(arity) and arity >= 0,
+      when is_atom(name) and not is_nil(name) and is_integer(arity) and arity >= 0,
       do: {:ok, {name, arity}}
 
   def parse_definition_spec(spec) when is_binary(spec) do
@@ -224,14 +240,19 @@ defmodule Adze.Definition do
   """
   @spec resolve_key({atom() | String.t(), non_neg_integer()}, [%{name: atom()}]) ::
           {atom() | String.t(), non_neg_integer()}
-  def resolve_key({name, arity}, _defs) when is_atom(name), do: {name, arity}
+  def resolve_key({name, arity}, _defs) when is_atom(name) and not is_nil(name), do: {name, arity}
 
   def resolve_key({name, arity}, defs) when is_binary(name) do
-    case Enum.find(defs, &(Atom.to_string(&1.name) == name)) do
+    case Enum.find(
+           defs,
+           &(is_atom(&1.name) and not is_nil(&1.name) and Atom.to_string(&1.name) == name)
+         ) do
       %{name: atom} -> {atom, arity}
       nil -> {name, arity}
     end
   end
+
+  def resolve_key({name, arity}, _defs), do: {name, arity}
 
   defp effective_allowlist(opts) do
     app_level =
@@ -306,16 +327,15 @@ defmodule Adze.Definition do
         {flush(groups, current), attrs, new_intervening, nil}
 
       def_node?(node) ->
-        if intervening != [] do
-          throw({:ambiguous_attribute, ambiguous_info(node, attrs, intervening)})
-        end
+        ambiguous =
+          if intervening != [], do: ambiguous_info(node, attrs, intervening)
 
         key = def_key(node)
 
-        if current && current.key == key && attrs == [] do
+        if current && elem(key, 1) != nil && current.key == key && attrs == [] do
           {groups, [], [], %{current | clauses: current.clauses ++ [node]}}
         else
-          new_group = %{key: key, attrs: attrs, clauses: [node]}
+          new_group = %{key: key, attrs: attrs, clauses: [node], ambiguous: ambiguous}
           {flush(groups, current), [], [], new_group}
         end
 
@@ -329,7 +349,10 @@ defmodule Adze.Definition do
   defp flush(groups, nil), do: groups
   defp flush(groups, current), do: [current | groups]
 
-  defp build_definition(%{key: {kind, name, arity}, attrs: attrs, clauses: clauses}, module_name) do
+  defp build_definition(
+         %{key: {kind, name, arity}, attrs: attrs, clauses: clauses} = group,
+         module_name
+       ) do
     nodes = attrs ++ clauses
 
     %__MODULE__{
@@ -339,6 +362,7 @@ defmodule Adze.Definition do
       kind: kind,
       visibility: visibility(kind),
       range: group_range(nodes),
+      ambiguous: group.ambiguous,
       nodes: nodes,
       parts: %{
         leading_comments: collect_leading_comments(nodes),
@@ -380,11 +404,21 @@ defmodule Adze.Definition do
 
   defp name_arity({:when, _, [head | _]}), do: name_arity(head)
 
+  # `def unquote(name)(...)` and friends: the name isn't statically known.
+  # Use `nil` (never a valid user spec name) so these can't collide with a
+  # real def called `unknown`. Checked before the normal-name clauses so a
+  # bare `def unquote(head)` isn't read as a def named `unquote/1`.
+  defp name_arity({:unquote, _, args}) when is_list(args), do: {nil, length(args)}
+  defp name_arity({{:unquote, _, _}, _, args}) when is_list(args), do: {nil, length(args)}
+
   defp name_arity({name, _, args}) when is_atom(name) and is_list(args),
     do: {name, length(args)}
 
   defp name_arity({name, _, ctx}) when is_atom(name) and (is_atom(ctx) or is_nil(ctx)),
     do: {name, 0}
+
+  defp name_arity({_, _, args}) when is_list(args), do: {nil, length(args)}
+  defp name_arity(_), do: {nil, 0}
 
   defp visibility(kind) when kind in @private_kinds, do: :private
   defp visibility(_), do: :public

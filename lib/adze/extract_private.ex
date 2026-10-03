@@ -179,11 +179,16 @@ defmodule Adze.ExtractPrivate do
     from_module = Keyword.get(opts, :from_module)
 
     with {:ok, parsed} <- Definition.parse_definition_spec(spec),
-         {:ok, defs} <- Definition.list(source, opts) do
+         {:ok, defs} <- Definition.list(source, Keyword.put(opts, :lenient, true)) do
       {name, arity} = Definition.resolve_key(parsed, defs)
       matches = Enum.filter(defs, &(&1.name == name and &1.arity == arity))
 
-      pick_match(matches, name, arity, from_module)
+      with {:ok, picked} <- pick_match(matches, name, arity, from_module) do
+        case picked.ambiguous do
+          nil -> {:ok, picked}
+          info -> {:error, {:ambiguous_attribute, info}}
+        end
+      end
     end
   end
 

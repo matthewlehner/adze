@@ -90,6 +90,14 @@ defmodule AdzeTest do
     test "returns error tuple on parse failure" do
       assert {:error, {:parse, _}} = Outline.outline("def broken(")
     end
+
+    test "unquoted def has a nil name and its real arity, like Definition" do
+      src = "defmodule X do\n  def unquote(:a)(x, y), do: 1\nend\n"
+      {:ok, outline} = Outline.outline(src)
+      [%{children: [child]}] = outline.definitions
+      assert child.name == nil
+      assert child.arity == 2
+    end
   end
 
   describe "ls text rendering of @spec / @type targets" do
@@ -145,6 +153,32 @@ defmodule AdzeTest do
     test "defguardp uses `g` prefix plus [private] tag", %{text: text} do
       assert text =~ ~r/^\s*g priv_guard\/1 when … \[private\]   /m
       refute text =~ ~r/^\s*p priv_guard\/1/m
+    end
+  end
+
+  describe "unquoted def names" do
+    @unquoted_source """
+    defmodule X do
+      def unquote(:dyn)(a, b), do: a + b
+      def unquote(head), do: 1
+    end
+    """
+
+    test "a fully unquoted head matches Adze.Definition (nil name, not unquote/1)" do
+      {:ok, outline} = Outline.outline(@unquoted_source)
+      [%{children: [_dyn, whole_head]}] = outline.definitions
+
+      assert whole_head.name == nil
+      assert whole_head.arity == 1
+    end
+
+    test "text rendering gives an unquoted def a visible label" do
+      {:ok, outline} = Outline.outline(@unquoted_source)
+      text = Adze.Formatter.format(outline, :text)
+
+      # Currently renders `    /2   L2`: `to_string(nil)` is "".
+      refute text =~ ~r/^\s+\/2   /m
+      assert text =~ ~r/^\s*\S+\/2   L2$/m
     end
   end
 

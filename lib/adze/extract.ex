@@ -164,7 +164,7 @@ defmodule Adze.Extract do
          :ok <- validate_module_name(target_module),
          {:ok, target_path} <- resolve_target_path(target_module, opts),
          :ok <- check_target_path_free(target_path),
-         {:ok, all_defs} <- Definition.list(source, opts),
+         {:ok, all_defs} <- Definition.list(source, Keyword.put(opts, :lenient, true)),
          def_key = Definition.resolve_key(parsed_key, all_defs),
          {:ok, source_module} <- resolve_source_module(all_defs, def_key, opts),
          :ok <- ensure_supported_source_module(source_module),
@@ -173,7 +173,8 @@ defmodule Adze.Extract do
          {:ok, closure_defs} <- compute_closure(source, def_key, source_module, all_defs, opts),
          {:ok, shared_privates} <-
            shared_private_helpers(source, closure_defs, source_module, all_defs, opts),
-         :ok <- check_moved_macros_unused(source, closure_defs, source_module, opts) do
+         :ok <- check_moved_macros_unused(source, closure_defs, source_module, opts),
+         :ok <- check_not_ambiguous(closure_defs ++ shared_privates) do
       {kept_directives, dropped_directives_raw} =
         filter_directives(body_info.directives, closure_defs)
 
@@ -779,6 +780,13 @@ defmodule Adze.Extract do
 
       err ->
         err
+    end
+  end
+
+  defp check_not_ambiguous(defs) do
+    case Enum.find(defs, & &1.ambiguous) do
+      nil -> :ok
+      %Definition{ambiguous: info} -> {:error, {:ambiguous_attribute, info}}
     end
   end
 
@@ -1397,6 +1405,11 @@ defmodule Adze.Extract do
       promote? = MapSet.member?(promote_keys, {d.name, d.arity})
       d_out = if promote?, do: promote_definition(d), else: d
 
+      # An ambiguous def has a non-allowlisted attribute between its attrs
+      # and its clauses; re-rendering the whole range would drop it. Only
+      # touch the clauses there and leave the attrs (and that attribute) alone.
+      d_out = if d.ambiguous, do: clauses_only(d_out), else: d_out
+
       text =
         case rewrite_def(d_out, rewrite_keys, target_parts) do
           nil when promote? ->
@@ -1415,11 +1428,35 @@ defmodule Adze.Extract do
 
         text ->
           text = if promote?, do: prepend_doc_false(text, d), else: text
-          s = Keyword.fetch!(d.range.start, :line)
-          e = Keyword.fetch!(d.range.end, :line)
+          {s, e} = op_lines(d)
           [{s, e, text}]
       end
     end)
+  end
+
+  defp clauses_only(%Definition{parts: %{clauses: clauses}} = d), do: %{d | nodes: clauses}
+
+  defp op_lines(%Definition{ambiguous: nil, range: range}),
+    do: {Keyword.fetch!(range.start, :line), Keyword.fetch!(range.end, :line)}
+
+  defp op_lines(%Definition{parts: %{clauses: clauses}, range: range}) do
+    ranges = clauses |> Enum.map(&Sourceror.get_range/1) |> Enum.reject(&is_nil/1)
+
+    case ranges do
+      [] ->
+        {Keyword.fetch!(range.start, :line), Keyword.fetch!(range.end, :line)}
+
+      _ ->
+        # Comments hang off the clause and are re-rendered with it, so the
+        # replaced range must start at the earliest one.
+        comment_lines =
+          clauses
+          |> Enum.flat_map(&(&1 |> elem(1) |> Keyword.get(:leading_comments, [])))
+          |> Enum.map(& &1.line)
+
+        {(comment_lines ++ Enum.map(ranges, &Keyword.fetch!(&1.start, :line))) |> Enum.min(),
+         ranges |> Enum.map(&Keyword.fetch!(&1.end, :line)) |> Enum.max()}
+    end
   end
 
   # Walk each AST node of a surviving def. Returns the rewritten node
