@@ -40,6 +40,8 @@ defmodule Adze.ProjectRewrite do
   `test/project_rewrite_test.exs` and `test/rename_test.exs`.
   """
 
+  alias Adze.AliasScope
+
   @enforce_keys [:igniter]
   defstruct [:igniter, :root, test?: false]
 
@@ -132,8 +134,8 @@ defmodule Adze.ProjectRewrite do
       same-namespace pass left in place and adze patched on the
       caller's behalf.
     * `surviving_refs` — bare-short references the fix-up could not
-      safely rewrite (no qualifying non-`as:` alias declaration in
-      pre-rewrite content). Callers like `Adze.Rename` surface these
+      safely attribute to the renamed module (no non-`as:` alias to it
+      in scope). Callers like `Adze.Rename` surface these
       as a warning and refuse to write without `force: true`.
 
   ## Follow-up work performed
@@ -146,10 +148,13 @@ defmodule Adze.ProjectRewrite do
        upstream bug — the string-substitution pass rewrites the alias
        declaration before the AST pass runs, so bare
        `OldShort.fun(...)` call sites are no longer resolvable to the
-       old aliases list and get left un-rewritten. Adze patches them
-       itself in files that had a non-`as:` alias to the renamed
-       module in their pre-rewrite content. Files without that
-       evidence get left alone and reported in `surviving_refs`.
+       old aliases list and get left un-rewritten. Adze patches each
+       one whose lexical scope has a non-`as:` alias to the renamed
+       module. A bare ref with no alias for the short name in scope is
+       left alone and reported in `surviving_refs`; one bound to some
+       other module (`alias Other.OldShort`, `as:`, a nested
+       `defmodule`) is not a reference to the renamed module and is
+       neither touched nor reported.
   """
   @spec rename_module(t(), module(), module()) :: {:ok, t(), rename_report()}
   def rename_module(%__MODULE__{} = rewrite, old_module, new_module)
@@ -204,29 +209,36 @@ defmodule Adze.ProjectRewrite do
     "test/" <> Macro.underscore(test_mod) <> ".exs"
   end
 
-  # Single pass over every changed file: parse the post-rewrite AST,
-  # collect `{:__aliases__, _, [OldShort | _]}` survivors, decide
-  # whether the file is safe to patch (had a non-`as:` alias to the
-  # renamed module in its pre-rewrite content), and either:
+  # Single pass over every changed file: parse the post-rewrite AST and
+  # walk it with Elixir's lexical alias rules (`Adze.AliasScope`),
+  # deciding for each `{:__aliases__, _, [OldShort | _]}` what the short
+  # name refers to at that point:
   #
-  #   * `:fix`     — rewrite survivors to NewShort, update the source,
-  #                  record refs in `fixed`.
-  #   * `:keep`    — leave the file alone, record refs in `surviving`.
-  #   * `:nothing` — no survivors, no work.
+  #   * the renamed module — a non-`as:` `alias NewModule` is in scope
+  #     (Igniter rewrote `alias OldModule` to it, leaving the bare
+  #     `OldShort` refs behind) → rewrite to `NewShort`, report `fixed`;
+  #   * nothing (no alias binds `OldShort`), or a surviving
+  #     `alias OldModule` → can't tell / still broken → leave it,
+  #     report `surviving`;
+  #   * some other module (`alias Other.OldShort`, `as: OldShort`, a
+  #     nested `defmodule OldShort`) → not a reference to the renamed
+  #     module at all; leave it alone and don't report it.
   #
-  # The previous implementation walked every changed file twice (once
-  # to fix-up, once to find what survived). One pass is enough: the
-  # "surviving" output is exactly the survivors we chose not to fix.
+  # A file is re-rendered only when something was fixed.
   defp apply_short_ref_fixup(rewrite, from_module, to_module) do
-    old_short = short_atom(from_module)
-    new_short = short_atom(to_module)
+    ctx = %{
+      old_short: short_atom(from_module),
+      new_short: short_atom(to_module),
+      old_str: inspect(from_module),
+      new_str: inspect(to_module)
+    }
 
     rewrite
     |> changed_sources()
     |> Enum.reduce({rewrite, [], []}, fn source, {rw, fixed, surviving} ->
-      case classify_source(source, old_short, new_short) do
-        {:fix, new_source, refs} ->
-          {put_source(rw, new_source), fixed ++ refs, surviving}
+      case classify_source(source, ctx) do
+        {:fix, new_source, new_fixed, new_surviving} ->
+          {put_source(rw, new_source), fixed ++ new_fixed, surviving ++ new_surviving}
 
         {:keep, refs} ->
           {rw, fixed, surviving ++ refs}
@@ -240,118 +252,190 @@ defmodule Adze.ProjectRewrite do
     end)
   end
 
-  defp classify_source(source, old_short, new_short) do
+  defp classify_source(source, ctx) do
     content = Rewrite.Source.get(source, :content)
     path = Rewrite.Source.get(source, :path)
 
-    with {:ok, ast} <- Sourceror.parse_string(content),
-         survivors when survivors != [] <- collect_short_refs(ast, old_short, path) do
-      if pre_rewrite_had_bare_alias?(source, old_short) do
-        new_ast = rewrite_short(ast, old_short, new_short)
+    case Sourceror.parse_string(content) do
+      {:ok, ast} ->
+        ctx = Map.put(ctx, :mark_renamed?, mark_renamed?(source, ctx))
+        {new_ast, fixed, surviving} = walk_short_refs(ast, ctx, path)
 
-        case render(new_ast) do
-          {:ok, new_content} ->
-            updated = Rewrite.Source.update(source, :content, new_content)
-            {:fix, updated, survivors}
+        cond do
+          fixed == [] and surviving == [] ->
+            :nothing
 
-          {:error, _reason} ->
-            {:keep, survivors}
+          fixed == [] ->
+            {:keep, surviving}
+
+          true ->
+            case render(new_ast) do
+              {:ok, new_content} ->
+                {:fix, Rewrite.Source.update(source, :content, new_content), fixed, surviving}
+
+              {:error, _reason} ->
+                {:keep, fixed ++ surviving}
+            end
         end
-      else
-        {:keep, survivors}
-      end
-    else
-      _ -> :nothing
+
+      _ ->
+        :nothing
     end
   end
 
-  defp collect_short_refs(ast, short, path) do
-    {_ast, refs} =
-      Macro.prewalk(ast, [], fn
-        {:__aliases__, meta, [^short | _]} = node, acc ->
-          line = Keyword.get(meta, :line, 0)
-          {node, [%{path: path, line: line, short: short} | acc]}
-
-        node, acc ->
-          {node, acc}
-      end)
-
-    Enum.reverse(refs)
+  # Whether a non-`as:` `alias NewModule` in the post-rewrite source
+  # means "`OldShort` here meant the renamed module". Not when the short
+  # name didn't change (`alias NewModule` binds `OldShort` itself, so
+  # those refs already resolve), and not when the file already aliased
+  # `NewModule` before the rename — that declaration is
+  # indistinguishable from a rewritten one, so a bare `OldShort` near it
+  # can't be attributed to the rename.
+  defp mark_renamed?(source, ctx) do
+    ctx.old_short != ctx.new_short and not pre_rewrite_aliased?(source, ctx.new_str)
   end
 
-  defp pre_rewrite_had_bare_alias?(source, old_short) do
+  defp pre_rewrite_aliased?(source, module) do
     case source |> Rewrite.Source.get(:content, 1) |> Sourceror.parse_string() do
-      {:ok, ast} -> had_bare_alias_to_short?(ast, old_short)
-      _ -> false
-    end
-  end
+      {:ok, ast} ->
+        {_, found?} =
+          Macro.prewalk(ast, false, fn
+            {:alias, _, args} = node, false when is_list(args) ->
+              {node, Enum.any?(AliasScope.alias_bindings(args, nil), &(&1.module == module))}
 
-  # Did the file declare an `alias` whose target ended in `OldShort`
-  # *without* an `as:` clause? `as:` aliases don't produce bare
-  # `OldShort.*` call sites — the binding is rewritten to the `as:`
-  # value — so they aren't evidence that bare refs were resolving via
-  # this alias.
-  defp had_bare_alias_to_short?(ast, old_short) do
-    {_, found?} =
-      Macro.prewalk(ast, false, fn
-        node, true ->
-          {node, true}
+            node, acc ->
+              {node, acc}
+          end)
 
-        {:alias, _, args} = node, false ->
-          {node, alias_targets_short_no_as?(args, old_short)}
-
-        node, acc ->
-          {node, acc}
-      end)
-
-    found?
-  end
-
-  defp alias_targets_short_no_as?(args, short) do
-    case args do
-      # alias Foo.Bar.OldShort
-      [{:__aliases__, _, parts}] ->
-        List.last(parts) == short
-
-      # alias Foo.Bar.OldShort, opts
-      [{:__aliases__, _, parts}, opts] when is_list(opts) ->
-        List.last(parts) == short and not has_as_opt?(opts)
-
-      # alias Foo.{A, OldShort}
-      [{{:., _, [{:__aliases__, _, _prefix}, :{}]}, _, members}] ->
-        Enum.any?(members, fn
-          {:__aliases__, _, parts} -> List.last(parts) == short
-          _ -> false
-        end)
+        found?
 
       _ ->
         false
     end
   end
 
-  defp has_as_opt?(opts) do
-    Enum.any?(opts, fn
-      {key, _value} -> unwrap_atom(key) == :as
-      _ -> false
-    end)
+  defp walk_short_refs(ast, ctx, path) do
+    {new_ast, acc} =
+      Macro.traverse(
+        ast,
+        %{scope: [], aliases: %{}, stack: [], fixed: [], surviving: []},
+        &short_ref_pre(&1, &2, ctx, path),
+        &short_ref_post/2
+      )
+
+    {new_ast, Enum.reverse(acc.fixed), Enum.reverse(acc.surviving)}
   end
 
-  defp unwrap_atom({:__block__, _, [a]}) when is_atom(a), do: a
-  defp unwrap_atom(a) when is_atom(a), do: a
-  defp unwrap_atom(_), do: nil
+  # The `defmodule` name is resolved against the aliases *outside* the
+  # module (it can be a renamed ref itself: `defmodule OldShort.Sub`),
+  # then tagged so the child visit skips it. Its implicit alias goes
+  # below the scope push so it outlives the module.
+  defp short_ref_pre({:defmodule, meta, [name_ast, body]}, acc, ctx, path) do
+    current = current_module(acc.scope)
+    head_bound? = head_bound?(name_ast, acc.aliases)
+    module_name = Adze.Names.defmodule_name(name_ast, current || "")
+    {name_ast, acc} = classify_short_ref(name_ast, acc, ctx, path, :defmodule)
+
+    aliases =
+      case AliasScope.implicit_alias(name_ast, current, head_bound?) do
+        nil -> acc.aliases
+        {name, module} -> bind(acc.aliases, %{name: name, module: module, as?: false}, ctx)
+      end
+
+    acc = %{
+      acc
+      | scope: [module_name | acc.scope],
+        aliases: aliases,
+        stack: [aliases | acc.stack]
+    }
+
+    {{:defmodule, meta, [skip_tag(name_ast), body]}, acc}
+  end
+
+  defp short_ref_pre({:alias, _, args} = node, acc, ctx, _path) when is_list(args) do
+    aliases =
+      args
+      |> AliasScope.alias_bindings(current_module(acc.scope))
+      |> Enum.reduce(acc.aliases, &bind(&2, &1, ctx))
+
+    {node, %{acc | aliases: aliases}}
+  end
+
+  defp short_ref_pre({:__aliases__, _, _} = node, acc, ctx, path),
+    do: classify_short_ref(node, acc, ctx, path, :ref)
+
+  defp short_ref_pre(node, acc, _ctx, _path) do
+    if AliasScope.scope_node?(node),
+      do: {node, %{acc | stack: [acc.aliases | acc.stack]}},
+      else: {node, acc}
+  end
+
+  defp short_ref_post({:defmodule, meta, [name_ast, body]}, acc) do
+    acc = %{acc | scope: tl(acc.scope), aliases: hd(acc.stack), stack: tl(acc.stack)}
+    {{:defmodule, meta, [skip_untag(name_ast), body]}, acc}
+  end
+
+  defp short_ref_post(node, acc) do
+    if AliasScope.scope_node?(node),
+      do: {node, %{acc | aliases: hd(acc.stack), stack: tl(acc.stack)}},
+      else: {node, acc}
+  end
+
+  # An alias binding, plus — for a non-`as:` alias to the new module —
+  # the note that a bare `OldShort` in this scope meant the renamed module.
+  defp bind(aliases, %{name: name, module: module, as?: as?}, ctx) do
+    aliases = Map.put(aliases, name, module)
+
+    if ctx.mark_renamed? and not as? and module == ctx.new_str,
+      do: Map.put(aliases, Atom.to_string(ctx.old_short), :renamed),
+      else: aliases
+  end
+
+  defp classify_short_ref({:__aliases__, meta, [head | rest]} = node, acc, ctx, path, role)
+       when head == ctx.old_short do
+    ref = %{path: path, line: Keyword.get(meta, :line, 0), short: head}
+
+    cond do
+      Keyword.get(meta, :adze_skip, false) ->
+        {node, acc}
+
+      Map.get(acc.aliases, Atom.to_string(head)) == :renamed ->
+        {{:__aliases__, meta, [ctx.new_short | rest]}, %{acc | fixed: [ref | acc.fixed]}}
+
+      # A `defmodule` name that isn't a renamed ref defines a module of
+      # its own; it isn't a reference that could have been missed.
+      role == :defmodule ->
+        {node, acc}
+
+      Map.get(acc.aliases, Atom.to_string(head)) in [nil, ctx.old_str] ->
+        {node, %{acc | surviving: [ref | acc.surviving]}}
+
+      true ->
+        {node, acc}
+    end
+  end
+
+  defp classify_short_ref(node, acc, _ctx, _path, _role), do: {node, acc}
+
+  defp head_bound?({:__aliases__, _, [first | _]}, aliases) when is_atom(first),
+    do: Map.has_key?(aliases, Atom.to_string(first))
+
+  defp head_bound?(_name_ast, _aliases), do: false
+
+  defp skip_tag({:__aliases__, meta, parts}),
+    do: {:__aliases__, [{:adze_skip, true} | meta], parts}
+
+  defp skip_tag(other), do: other
+
+  defp skip_untag({:__aliases__, meta, parts}),
+    do: {:__aliases__, Keyword.delete(meta, :adze_skip), parts}
+
+  defp skip_untag(other), do: other
+
+  defp current_module([]), do: nil
+  defp current_module([top | _]), do: top
 
   defp short_atom(module) do
     module |> Module.split() |> List.last() |> String.to_atom()
-  end
-
-  defp rewrite_short(ast, old_short, new_short) do
-    Macro.prewalk(ast, fn
-      {:__aliases__, meta, [^old_short | rest]} ->
-        {:__aliases__, meta, [new_short | rest]}
-
-      node ->
-        node
-    end)
   end
 
   # Sourceror's `to_string/2` preserves comments and formatting from

@@ -199,9 +199,9 @@ defmodule AdzeRenameTest do
     # Igniter's same-namespace rename has an upstream bug: it leaves
     # bare `OldShort.fun(...)` call sites un-rewritten even though the
     # alias declaration was updated. Without the fix-up these would
-    # compile-break. The fix-up patches them ourselves: when a file
-    # had a non-`as:` alias to the renamed module's old name, we
-    # rewrite every surviving `OldShort.*` ref to `NewShort.*`.
+    # compile-break. The fix-up patches them ourselves: a surviving
+    # `OldShort.*` ref is rewritten to `NewShort.*` when a non-`as:`
+    # alias to the renamed module is in its lexical scope.
 
     test "same-namespace rename: bare refs in aliased callers get fixed up" do
       files = %{
@@ -318,6 +318,80 @@ defmodule AdzeRenameTest do
       # be a surviving bare ref. This test mostly confirms we don't
       # over-eagerly mutate files without alias evidence.
       assert notices_of(result, :rewritten_short_refs) == []
+    end
+
+    test "an unrelated alias Other.OldUtil is not treated as the renamed module" do
+      files = %{
+        "lib/old.ex" => """
+        defmodule MyApp.Util.OldUtil do
+          def new, do: %{}
+        end
+        """,
+        "lib/unrelated.ex" => """
+        defmodule MyApp.Unrelated do
+          alias MyApp.Other.OldUtil
+
+          def a, do: MyApp.Util.OldUtil.new()
+          def b, do: OldUtil.new()
+        end
+        """
+      }
+
+      {:ok, result} =
+        Rename.rename(from: "MyApp.Util.OldUtil", to: "MyApp.Util.NewUtil", files: files)
+
+      diff = result.diffs["lib/unrelated.ex"]
+      assert diff =~ "MyApp.Util.NewUtil.new()"
+      refute diff =~ ~r/\+.*def b, do: NewUtil/
+      assert notices_of(result, :rewritten_short_refs) == []
+      assert warnings_of(result, :surviving_references) == []
+    end
+
+    test "fix-up follows lexical scope: shadowing and function-local aliases" do
+      files = %{
+        "lib/old.ex" => """
+        defmodule MyApp.Util.OldUtil do
+          def new, do: %{}
+        end
+        """,
+        "lib/caller.ex" => """
+        defmodule MyApp.Caller do
+          alias MyApp.Util.OldUtil
+
+          def a, do: OldUtil.new()
+
+          def b do
+            alias MyApp.Other.OldUtil
+            OldUtil.new()
+          end
+
+          def c, do: OldUtil.new()
+        end
+        """,
+        "lib/scoped.ex" => """
+        defmodule MyApp.Scoped do
+          def one do
+            alias MyApp.Util.OldUtil
+            OldUtil.new()
+          end
+
+          def two, do: OldUtil.new()
+        end
+        """
+      }
+
+      {:ok, result} =
+        Rename.rename(from: "MyApp.Util.OldUtil", to: "MyApp.Util.NewUtil", files: files)
+
+      fixed = notices_of(result, :rewritten_short_refs) |> Enum.map(&{&1.path, &1.line})
+      assert fixed == [{"lib/caller.ex", 4}, {"lib/caller.ex", 11}, {"lib/scoped.ex", 4}]
+
+      # `def b`'s ref resolves to MyApp.Other.OldUtil — untouched, unreported.
+      refute result.diffs["lib/caller.ex"] =~ ~r/^\s*\d+ \+ \|\s+NewUtil\.new\(\)$/m
+
+      # `def two`'s ref has no alias in scope — left alone and flagged.
+      surviving = warnings_of(result, :surviving_references) |> Enum.map(&{&1.path, &1.line})
+      assert surviving == [{"lib/scoped.ex", 7}]
     end
 
     defp warnings_of(result, tag) do
