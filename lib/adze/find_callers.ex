@@ -359,42 +359,33 @@ defmodule Adze.FindCallers do
   defp match_call(nil, _fun, _arity, _aliases, _target, _scope), do: false
 
   defp match_call(parts, fun, arity, aliases, target, scope) do
-    case normalize_parts(parts, scope) do
+    case resolve_module(parts, aliases, scope) do
       nil ->
         false
 
-      normalized ->
-        case resolve_parts(normalized, aliases) do
-          nil ->
-            false
-
-          resolved ->
-            resolved == target.module and
-              Adze.Names.name_matches?(target.function, fun) and
-              arity_matches?(target.arity, arity)
-        end
+      resolved ->
+        resolved == target.module and
+          Adze.Names.name_matches?(target.function, fun) and
+          arity_matches?(target.arity, arity)
     end
   end
 
-  # Substitutes a leading `{:__MODULE__, _, ctx}` part with the parts of
-  # the innermost-enclosing module (from `scope`), so refs like
-  # `__MODULE__.Inner.thing(...)` resolve the same way as a plain
-  # `Inner.thing(...)` alias lookup would. Any other non-atom leading
-  # part (an arbitrary expression that evaluates to a module — rare but
-  # legal) still can't be resolved statically, so we return `nil`.
-  defp normalize_parts([{:__MODULE__, _, ctx} | rest], scope) when is_atom(ctx) do
+  # A leading `{:__MODULE__, _, ctx}` part is the innermost-enclosing
+  # module (from `scope`), and it's absolute: `__MODULE__.Inner` is
+  # `Current.Inner` even if an alias shadows `Current`'s first segment,
+  # so it skips alias lookup. Built as a string, not atoms — `current`
+  # may be a label like `:erl_mod`, which then just never matches a
+  # `Foo.Bar` target. Any other non-atom part (an expression that
+  # evaluates to a module) can't be resolved statically: `nil`.
+  defp resolve_module([{:__MODULE__, _, ctx} | rest], _aliases, scope) when is_atom(ctx) do
     case scope do
-      [] ->
-        nil
-
-      [current | _] ->
-        String.split(current, ".") |> Enum.map(&String.to_atom/1) |> Kernel.++(rest)
+      [current | _] when rest == [] -> current
+      [current | _] -> if Enum.all?(rest, &is_atom/1), do: current <> "." <> join_parts(rest)
+      [] -> nil
     end
   end
 
-  defp normalize_parts(parts, _scope) do
-    if Enum.all?(parts, &is_atom/1), do: parts, else: nil
-  end
+  defp resolve_module(parts, aliases, _scope), do: resolve_parts(parts, aliases)
 
   defp resolve_parts(parts, aliases) do
     if Enum.all?(parts, &is_atom/1) do

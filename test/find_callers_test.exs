@@ -575,6 +575,35 @@ defmodule Adze.FindCallersTest do
       assert c.kind == :call
     end
 
+    test "__MODULE__ is absolute: an alias shadowing the module's first segment doesn't apply" do
+      files = %{
+        "lib/x.ex" => """
+        defmodule App.Thing do
+          alias Other.App
+
+          def go(x), do: __MODULE__.Inner.run(x)
+        end
+        """
+      }
+
+      assert {:ok, %{total: 1}} = FindCallers.find_callers("App.Thing.Inner.run/1", files: files)
+
+      assert {:ok, %{total: 0}} =
+               FindCallers.find_callers("Other.App.Thing.Inner.run/1", files: files)
+    end
+
+    test "__MODULE__ refs in an atom-named module don't resolve to a module" do
+      files = %{
+        "lib/x.ex" => """
+        defmodule :erl_style do
+          def go(x), do: __MODULE__.run(x)
+        end
+        """
+      }
+
+      assert {:ok, %{total: 0}} = FindCallers.find_callers("ErlStyle.run/1", files: files)
+    end
+
     test "bare __MODULE__.fun(...) self-calls and captures resolve" do
       files = %{
         "lib/x.ex" => """
