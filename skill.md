@@ -75,7 +75,8 @@ mix adze ls-extract --file lib/my_app/router.ex --definition dispatch/2
 ```
 
 The target def + every `defp` whose every same-module caller is in the
-closure. Run this before `extract` to see what would move.
+closure. Use it when you're deciding where to cut. `extract` computes
+the same closure itself, so you don't need it before every extract.
 
 ### `aliases` — directive listing
 
@@ -197,9 +198,9 @@ Refuses on `defdelegate`. Inherits `find-callers`' blind spots.
 
 ### Splitting a fat module
 
-1. `mix adze ls-extract --file ... --definition target/N` — preview the closure
-2. `mix adze extract --file ... --definition target/N --module New.Module`
-3. `mix compile --warnings-as-errors` — add back any `dropped_directives` the new module needs
+1. `mix adze extract --file ... --definition target/N --module New.Module`
+   (not sure where to cut? `ls-extract` on a few candidates first)
+2. `mix compile --warnings-as-errors` — add back any `dropped_directives` the new module needs
 
 ### Renaming a module
 
@@ -209,8 +210,9 @@ Refuses on `defdelegate`. Inherits `find-callers`' blind spots.
 
 ### Privatizing an over-exposed helper
 
-1. `mix adze find-callers --target Mod.fun/N` — confirm no external callers
-2. `mix adze extract-private --file ... --definition fun/N` — flip
+1. `mix adze extract-private --file ... --definition fun/N` — checks for
+   external callers itself and refuses if there are any
+2. `mix compile --warnings-as-errors`
 
 ## Important notes
 
@@ -225,10 +227,10 @@ Refuses on `defdelegate`. Inherits `find-callers`' blind spots.
 
 **Before reading any Elixir file over 200 lines, run `mix adze ls --file PATH` first.** Read only the line range you need.
 
-**When the user asks to split or extract from a module,** run `mix adze ls-extract` to find the natural closure, then `mix adze extract` to execute.
+**When the user asks to split or extract from a module,** run `mix adze extract`. Reach for `ls-extract` only when you're choosing between cut points.
 
 **When you're about to multi-edit a rename across files,** use `mix adze rename` instead — it handles aliases, call sites, test modules, and file moves.
 
-**When you see a public function that looks like it should be private,** run `mix adze find-callers` to confirm, then `mix adze extract-private` to flip.
+**When you see a public function that looks like it should be private,** run `mix adze extract-private` directly. It runs the caller search itself and refuses if anything outside the module calls it.
 
 **After any adze write op, always run `mix compile --warnings-as-errors`.** The compiler is your safety net.
