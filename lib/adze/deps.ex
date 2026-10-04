@@ -23,6 +23,8 @@ defmodule Adze.Deps do
   default-arg defs.
   """
 
+  alias Adze.AST
+
   @callable_kinds [:def, :defp, :defmacro, :defmacrop, :defguard, :defguardp, :defdelegate]
   @body_kinds [:def, :defp, :defmacro, :defmacrop]
 
@@ -61,25 +63,13 @@ defmodule Adze.Deps do
 
   # --- module discovery ---------------------------------------------------
 
-  defp collect_modules(ast), do: ast |> walk_modules([], "") |> Enum.reverse()
-
-  defp walk_modules({:__block__, _, exprs}, acc, prefix) do
-    Enum.reduce(exprs, acc, &walk_modules(&1, &2, prefix))
+  defp collect_modules(ast) do
+    ast
+    |> AST.reduce_modules([], fn node, name, body, acc ->
+      [%{name: name, range: AST.line_range(node), defs: analyze_module(body)} | acc]
+    end)
+    |> Enum.reverse()
   end
-
-  defp walk_modules({:defmodule, _meta, [alias_ast, [{_do, body}]]} = node, acc, prefix) do
-    name = Adze.Names.defmodule_name(alias_ast, prefix)
-
-    entry = %{
-      name: name,
-      range: range(node),
-      defs: analyze_module(body)
-    }
-
-    walk_modules(body, [entry | acc], name)
-  end
-
-  defp walk_modules(_other, acc, _prefix), do: acc
 
   # --- per-module analysis -----------------------------------------------
 
@@ -171,7 +161,7 @@ defmodule Adze.Deps do
                 head_arity: head_arity,
                 defaults_count: defaults_count,
                 private: kind in [:defp, :defmacrop, :defguardp],
-                range: range(node),
+                range: AST.line_range(node),
                 body: body
               }
             ]
@@ -291,18 +281,4 @@ defmodule Adze.Deps do
   defp unwrap_int({:__block__, _, [n]}) when is_integer(n), do: n
   defp unwrap_int(n) when is_integer(n), do: n
   defp unwrap_int(_), do: nil
-
-  # --- helpers -----------------------------------------------------------
-
-  defp range(node) do
-    case Sourceror.get_range(node) do
-      %Sourceror.Range{start: start_kw, end: end_kw} ->
-        %{start: Keyword.get(start_kw, :line), end: Keyword.get(end_kw, :line)}
-
-      _ ->
-        nil
-    end
-  rescue
-    _ -> nil
-  end
 end

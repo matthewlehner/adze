@@ -37,7 +37,7 @@ defmodule Adze.Aliases do
   grouping.
   """
 
-  alias Adze.Names
+  alias Adze.{AST, Names}
 
   @directives [:alias, :import, :require, :use]
 
@@ -77,25 +77,19 @@ defmodule Adze.Aliases do
 
   # --- module discovery (same shape as Adze.Deps) ------------------------
 
-  defp collect_modules(ast, lines), do: ast |> walk_modules([], "", lines) |> Enum.reverse()
+  defp collect_modules(ast, lines) do
+    ast
+    |> AST.reduce_modules([], fn node, name, body, acc ->
+      entry = %{
+        name: name,
+        range: AST.line_range(node),
+        directives: collect_directives(body, name, lines)
+      }
 
-  defp walk_modules({:__block__, _, exprs}, acc, prefix, lines) do
-    Enum.reduce(exprs, acc, &walk_modules(&1, &2, prefix, lines))
+      [entry | acc]
+    end)
+    |> Enum.reverse()
   end
-
-  defp walk_modules({:defmodule, _meta, [alias_ast, [{_do, body}]]} = node, acc, prefix, lines) do
-    name = Adze.Names.defmodule_name(alias_ast, prefix)
-
-    entry = %{
-      name: name,
-      range: range(node),
-      directives: collect_directives(body, name, lines)
-    }
-
-    walk_modules(body, [entry | acc], name, lines)
-  end
-
-  defp walk_modules(_other, acc, _prefix, _lines), do: acc
 
   # --- per-module directives ---------------------------------------------
 
@@ -106,7 +100,7 @@ defmodule Adze.Aliases do
   defp collect_directives(expr, module, lines), do: directive_node(expr, module, lines)
 
   defp directive_node({kind, _meta, args} = node, module, lines) when kind in @directives do
-    r = range(node)
+    r = AST.line_range(node)
     expand_directive(kind, args, module, r, source_slice(lines, r))
   end
 
@@ -178,17 +172,5 @@ defmodule Adze.Aliases do
     |> Enum.slice((s - 1)..(e - 1))
     |> Enum.join("\n")
     |> String.trim_leading()
-  end
-
-  defp range(node) do
-    case Sourceror.get_range(node) do
-      %Sourceror.Range{start: start_kw, end: end_kw} ->
-        %{start: Keyword.get(start_kw, :line), end: Keyword.get(end_kw, :line)}
-
-      _ ->
-        nil
-    end
-  rescue
-    _ -> nil
   end
 end

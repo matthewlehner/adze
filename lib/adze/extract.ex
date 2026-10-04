@@ -118,6 +118,7 @@ defmodule Adze.Extract do
   writing `lib/my_app/bar.ex` (new) and rewriting `lib/source.ex`.
   """
 
+  alias Adze.AST
   alias Adze.Definition
   alias Adze.Deps
   alias Adze.LsDeps
@@ -736,29 +737,11 @@ defmodule Adze.Extract do
       else: {:error, {:unsupported_module, module}}
   end
 
-  defp resolve_source_module(all_defs, {name, arity}, opts) do
-    matches =
-      all_defs
-      |> Enum.filter(&(&1.name == name and &1.arity == arity))
-      |> Enum.map(& &1.module)
-      |> Enum.uniq()
-
-    case {Keyword.get(opts, :from_module), matches} do
-      {nil, []} ->
-        {:error, {:not_found, {name, arity}}}
-
-      {nil, [m]} ->
-        {:ok, m}
-
-      {nil, mods} ->
-        {:error, {:ambiguous_source_module, %{definition: {name, arity}, modules: mods}}}
-
-      {from, mods} ->
-        if from in mods do
-          {:ok, from}
-        else
-          {:error, {:from_module_mismatch, %{from: from, candidates: mods}}}
-        end
+  defp resolve_source_module(all_defs, def_key, opts) do
+    case Definition.pick(def_key, all_defs, Keyword.get(opts, :from_module)) do
+      {:ok, %Definition{module: module}} -> {:ok, module}
+      {:error, :not_found} -> {:error, {:not_found, def_key}}
+      {:error, _} = err -> err
     end
   end
 
@@ -809,12 +792,13 @@ defmodule Adze.Extract do
   #     its line range.
 
   defp collect_body_info(ast, source_module) do
-    case find_defmodule(ast, "", source_module) do
+    case AST.find_module(ast, source_module) do
       nil ->
         {:error, {:source_module_not_found, source_module}}
 
-      {body_block, defmod_range} ->
-        body_nodes = body_to_list(body_block)
+      {defmod_node, body_block} ->
+        defmod_range = Sourceror.get_range(defmod_node)
+        body_nodes = AST.body_exprs(body_block)
         directives = Enum.filter(body_nodes, &directive?/1)
         moduledoc_nodes = Enum.filter(body_nodes, &moduledoc?/1)
 
@@ -827,30 +811,6 @@ defmodule Adze.Extract do
          }}
     end
   end
-
-  defp find_defmodule({:__block__, _, exprs}, prefix, target) do
-    Enum.find_value(exprs, &find_defmodule(&1, prefix, target))
-  end
-
-  defp find_defmodule({:defmodule, _meta, [alias_ast, [{_do, body}]]} = node, prefix, target) do
-    name = Adze.Names.defmodule_name(alias_ast, prefix)
-
-    cond do
-      name == target ->
-        {body, Sourceror.get_range(node)}
-
-      String.starts_with?(target, name <> ".") ->
-        find_defmodule(body, name, target)
-
-      true ->
-        nil
-    end
-  end
-
-  defp find_defmodule(_other, _prefix, _target), do: nil
-
-  defp body_to_list({:__block__, _, exprs}), do: exprs
-  defp body_to_list(single), do: [single]
 
   defp directive?({kind, _, args}) when kind in @directive_kinds and is_list(args), do: true
   defp directive?(_), do: false
@@ -974,16 +934,12 @@ defmodule Adze.Extract do
   # can't use Keyword.get directly. Walk pairs and unwrap each key.
   defp find_as_value([opts]) when is_list(opts) do
     Enum.find_value(opts, fn
-      {key, value} -> if unwrap_atom(key) == :as, do: value, else: nil
+      {key, value} -> if AST.unwrap_atom(key) == :as, do: value, else: nil
       _ -> nil
     end)
   end
 
   defp find_as_value(_), do: nil
-
-  defp unwrap_atom({:__block__, _, [a]}) when is_atom(a), do: a
-  defp unwrap_atom(a) when is_atom(a), do: a
-  defp unwrap_atom(_), do: nil
 
   # --- target file construction ------------------------------------------
 

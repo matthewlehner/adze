@@ -127,7 +127,7 @@ defmodule Adze.Definition do
     case Sourceror.parse_string(source) do
       {:ok, ast} ->
         try do
-          defs = walk_modules(ast, "", [], allowlist)
+          defs = collect_defs(ast, allowlist)
 
           case {Keyword.get(opts, :lenient, false), Enum.find(defs, & &1.ambiguous)} do
             {false, %__MODULE__{ambiguous: info}} -> {:error, {:ambiguous_attribute, info}}
@@ -254,6 +254,44 @@ defmodule Adze.Definition do
 
   def resolve_key({name, arity}, _defs), do: {name, arity}
 
+  @doc """
+  Pick the definition of `{name, arity}` from `defs`, which may span
+  several modules in one file.
+
+  With `from_module` nil the key must live in exactly one module;
+  otherwise it must live in `from_module`. Errors:
+
+    * `:not_found` — no module defines the key (callers wrap this in
+      their own error shape);
+    * `{:ambiguous_source_module, %{definition:, modules:}}` — several
+      modules define it and no `from_module` was given;
+    * `{:from_module_mismatch, %{from:, candidates:}}` — `from_module`
+      isn't one of the modules that define it.
+  """
+  @spec pick({atom() | String.t(), non_neg_integer()}, [t()], String.t() | nil) ::
+          {:ok, t()} | {:error, term()}
+  def pick({name, arity}, defs, from_module) do
+    matches = Enum.filter(defs, &(&1.name == name and &1.arity == arity))
+    modules = matches |> Enum.map(& &1.module) |> Enum.uniq()
+
+    case {from_module, modules} do
+      {_, []} ->
+        {:error, :not_found}
+
+      {nil, [_]} ->
+        {:ok, hd(matches)}
+
+      {nil, modules} ->
+        {:error, {:ambiguous_source_module, %{definition: {name, arity}, modules: modules}}}
+
+      {from, modules} ->
+        case Enum.find(matches, &(&1.module == from)) do
+          nil -> {:error, {:from_module_mismatch, %{from: from, candidates: modules}}}
+          picked -> {:ok, picked}
+        end
+    end
+  end
+
   defp effective_allowlist(opts) do
     app_level =
       :adze
@@ -270,20 +308,16 @@ defmodule Adze.Definition do
 
   # --- module discovery ---------------------------------------------------
 
-  defp walk_modules({:__block__, _, exprs}, prefix, acc, allowlist) do
-    Enum.reduce(exprs, acc, fn node, a -> walk_modules(node, prefix, a, allowlist) end)
+  # Per-module groups are collected in reverse and flattened once, so
+  # files with many modules don't pay for repeated list appends.
+  defp collect_defs(ast, allowlist) do
+    ast
+    |> Adze.AST.reduce_modules([], fn _node, name, body, acc ->
+      [group_body(Adze.AST.body_exprs(body), name, allowlist) | acc]
+    end)
+    |> Enum.reverse()
+    |> Enum.concat()
   end
-
-  defp walk_modules({:defmodule, _meta, [alias_ast, [{_do, body}]]}, prefix, acc, allowlist) do
-    name = Adze.Names.defmodule_name(alias_ast, prefix)
-    here = group_body(body_to_list(body), name, allowlist)
-    walk_modules(body, name, acc ++ here, allowlist)
-  end
-
-  defp walk_modules(_other, _prefix, acc, _allowlist), do: acc
-
-  defp body_to_list({:__block__, _, exprs}), do: exprs
-  defp body_to_list(single), do: [single]
 
   # --- per-module grouping state machine ----------------------------------
   #

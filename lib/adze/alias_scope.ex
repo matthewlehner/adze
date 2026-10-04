@@ -13,7 +13,7 @@ defmodule Adze.AliasScope do
   #     `Outer.Inner` in the enclosing scope (`implicit_alias/3`);
   #   * `alias_bindings/2` reads what names an `alias` declaration binds.
 
-  alias Adze.Names
+  alias Adze.{AST, Names}
 
   @type binding :: %{name: String.t(), module: String.t(), as?: boolean()}
 
@@ -35,7 +35,7 @@ defmodule Adze.AliasScope do
 
   def scope_node?(_), do: false
 
-  defp do_entry?({key, _body}), do: unwrap_atom(key) == :do
+  defp do_entry?({key, _body}), do: AST.unwrap_atom(key) == :do
   defp do_entry?(_), do: false
 
   @doc """
@@ -111,14 +111,10 @@ defmodule Adze.AliasScope do
   defp as_name(opts) do
     Enum.find_value(opts, fn
       {key, {:__aliases__, _, [as]}} when is_atom(as) ->
-        if unwrap_atom(key) == :as, do: Atom.to_string(as)
+        if AST.unwrap_atom(key) == :as, do: Atom.to_string(as)
 
       _ ->
         nil
     end)
   end
-
-  defp unwrap_atom({:__block__, _, [a]}) when is_atom(a), do: a
-  defp unwrap_atom(a) when is_atom(a), do: a
-  defp unwrap_atom(_), do: nil
 end

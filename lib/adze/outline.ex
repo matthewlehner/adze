@@ -8,6 +8,8 @@ defmodule Adze.Outline do
   bytes they need.
   """
 
+  alias Adze.AST
+
   @def_kinds [:def, :defp, :defmacro, :defmacrop, :defguard, :defguardp, :defdelegate]
   @directives [:alias, :import, :require, :use]
   @doc_attrs [
@@ -59,7 +61,7 @@ defmodule Adze.Outline do
       %{
         kind: :defmodule,
         name: alias_name(alias_ast),
-        range: range(node),
+        range: AST.line_range(node),
         children: collect_children(body)
       }
     ]
@@ -70,7 +72,7 @@ defmodule Adze.Outline do
       %{
         kind: :defprotocol,
         name: alias_name(alias_ast),
-        range: range(node),
+        range: AST.line_range(node),
         children: collect_children(body)
       }
     ]
@@ -81,13 +83,13 @@ defmodule Adze.Outline do
       %{
         kind: :defimpl,
         name: defimpl_name(args),
-        range: range(node)
+        range: AST.line_range(node)
       }
     ]
   end
 
   defp top_definition(other) do
-    [%{kind: :other, snippet: snippet(other), range: range(other)}]
+    [%{kind: :other, snippet: snippet(other), range: AST.line_range(other)}]
   end
 
   # --- module body --------------------------------------------------------
@@ -114,20 +116,20 @@ defmodule Adze.Outline do
       arity: arity,
       private: kind in [:defp, :defmacrop, :defguardp],
       guards: has_guard,
-      range: range(node)
+      range: AST.line_range(node)
     }
   end
 
   defp child_definition({:defstruct, _meta, [fields]} = node) do
-    %{kind: :defstruct, fields: struct_fields(fields), range: range(node)}
+    %{kind: :defstruct, fields: struct_fields(fields), range: AST.line_range(node)}
   end
 
   defp child_definition({:defexception, _meta, [fields]} = node) do
-    %{kind: :defexception, fields: struct_fields(fields), range: range(node)}
+    %{kind: :defexception, fields: struct_fields(fields), range: AST.line_range(node)}
   end
 
   defp child_definition({kind, _meta, [target | _]} = node) when kind in @directives do
-    %{kind: kind, target: alias_name(target), range: range(node)}
+    %{kind: kind, target: alias_name(target), range: AST.line_range(node)}
   end
 
   defp child_definition({:@, _meta, [{name, _, value_ast}]} = node) when is_atom(name) do
@@ -136,7 +138,7 @@ defmodule Adze.Outline do
       name: name,
       doc: name in @doc_attrs,
       target: attribute_target(name, value_ast),
-      range: range(node)
+      range: AST.line_range(node)
     }
   end
 
@@ -185,18 +187,14 @@ defmodule Adze.Outline do
 
   defp struct_fields(list) when is_list(list) do
     Enum.map(list, fn
-      {key_ast, _v} -> unwrap_atom(key_ast)
+      {key_ast, _v} -> AST.unwrap_atom(key_ast)
       k when is_atom(k) -> k
-      other -> unwrap_atom(other)
+      other -> AST.unwrap_atom(other)
     end)
     |> Enum.reject(&is_nil/1)
   end
 
   defp struct_fields(_), do: []
-
-  defp unwrap_atom({:__block__, _, [atom]}) when is_atom(atom), do: atom
-  defp unwrap_atom(atom) when is_atom(atom), do: atom
-  defp unwrap_atom(_), do: nil
 
   defp defimpl_name([protocol | rest]) do
     proto = alias_name(protocol)
@@ -227,18 +225,6 @@ defmodule Adze.Outline do
   defp attribute_target(:impl, [value]) when is_atom(value) or is_boolean(value), do: value
   defp attribute_target(:behaviour, [value]), do: alias_name(value)
   defp attribute_target(_, _), do: nil
-
-  defp range(node) do
-    case Sourceror.get_range(node) do
-      %Sourceror.Range{start: start_kw, end: end_kw} ->
-        %{start: Keyword.get(start_kw, :line), end: Keyword.get(end_kw, :line)}
-
-      _ ->
-        nil
-    end
-  rescue
-    _ -> nil
-  end
 
   defp snippet(ast) do
     ast |> Macro.to_string() |> String.slice(0, 60)

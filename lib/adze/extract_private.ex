@@ -91,7 +91,7 @@ defmodule Adze.ExtractPrivate do
       # → writes lib/foo.ex with `def helper` flipped to `defp helper`
   """
 
-  alias Adze.{Definition, FindCallers}
+  alias Adze.{AST, Definition, FindCallers}
 
   @type opts :: [
           definition: Definition.definition_spec(),
@@ -178,40 +178,14 @@ defmodule Adze.ExtractPrivate do
 
     with {:ok, parsed} <- Definition.parse_definition_spec(spec),
          {:ok, defs} <- Definition.list(source, Keyword.put(opts, :lenient, true)) do
-      {name, arity} = Definition.resolve_key(parsed, defs)
-      matches = Enum.filter(defs, &(&1.name == name and &1.arity == arity))
+      key = Definition.resolve_key(parsed, defs)
 
-      with {:ok, picked} <- pick_match(matches, name, arity, from_module) do
-        case picked.ambiguous do
-          nil -> {:ok, picked}
-          info -> {:error, {:ambiguous_attribute, info}}
-        end
+      case Definition.pick(key, defs, from_module) do
+        {:ok, %Definition{ambiguous: nil} = picked} -> {:ok, picked}
+        {:ok, %Definition{ambiguous: info}} -> {:error, {:ambiguous_attribute, info}}
+        {:error, :not_found} -> {:error, {:not_found, :definition}}
+        {:error, _} = err -> err
       end
-    end
-  end
-
-  defp pick_match([], _name, _arity, _from), do: {:error, {:not_found, :definition}}
-  defp pick_match([only], _, _, nil), do: {:ok, only}
-
-  defp pick_match([only], _, _, from) do
-    if only.module == from,
-      do: {:ok, only},
-      else: {:error, {:from_module_mismatch, %{from: from, candidates: [only.module]}}}
-  end
-
-  defp pick_match(many, name, arity, nil) do
-    {:error,
-     {:ambiguous_source_module,
-      %{definition: {name, arity}, modules: Enum.map(many, & &1.module)}}}
-  end
-
-  defp pick_match(many, _, _, from) do
-    case Enum.find(many, &(&1.module == from)) do
-      nil ->
-        {:error, {:from_module_mismatch, %{from: from, candidates: Enum.map(many, & &1.module)}}}
-
-      picked ->
-        {:ok, picked}
     end
   end
 
@@ -318,9 +292,9 @@ defmodule Adze.ExtractPrivate do
   # of `module` (nested modules' declarations don't count), as strings.
   defp module_behaviour_decls(source, module) do
     with {:ok, ast} <- Sourceror.parse_string(source),
-         body when not is_nil(body) <- find_module_body(ast, "", module) do
+         {_node, body} <- AST.find_module(ast, module) do
       body
-      |> body_nodes()
+      |> AST.body_exprs()
       |> Enum.reduce({[], []}, fn
         {:use, _, [target | _]}, {uses, behs} ->
           {[module_name(target, module) | uses], behs}
@@ -341,24 +315,6 @@ defmodule Adze.ExtractPrivate do
     do: ":" <> Atom.to_string(atom)
 
   defp module_name(ast, current), do: Adze.Names.module_ref(ast, current)
-
-  defp find_module_body({:__block__, _, exprs}, prefix, target),
-    do: Enum.find_value(exprs, &find_module_body(&1, prefix, target))
-
-  defp find_module_body({:defmodule, _, [name_ast, [{_do, body}]]}, prefix, target) do
-    name = Adze.Names.defmodule_name(name_ast, prefix)
-
-    cond do
-      name == target -> body
-      true -> body |> body_nodes() |> Enum.find_value(&find_module_body(&1, name, target))
-    end
-  end
-
-  defp find_module_body(_, _, _), do: nil
-
-  defp body_nodes({:__block__, _, exprs}), do: exprs
-  defp body_nodes(nil), do: []
-  defp body_nodes(single), do: [single]
 
   defp flip_kind(:def), do: {:ok, :defp}
   defp flip_kind(:defmacro), do: {:ok, :defmacrop}
@@ -404,18 +360,6 @@ defmodule Adze.ExtractPrivate do
   defp check_no_externals([]), do: :ok
   defp check_no_externals(externals), do: {:error, {:external_callers, externals}}
 
-  defp range_of(node) do
-    case Sourceror.get_range(node) do
-      %Sourceror.Range{start: start_kw, end: end_kw} ->
-        %{start: Keyword.get(start_kw, :line), end: Keyword.get(end_kw, :line)}
-
-      _ ->
-        nil
-    end
-  rescue
-    _ -> nil
-  end
-
   # --- the actual edit ---------------------------------------------------
   #
   # Each clause sits on its own start line. Replace the leading
@@ -432,7 +376,7 @@ defmodule Adze.ExtractPrivate do
 
     clause_lines =
       clauses
-      |> Enum.map(&range_of/1)
+      |> Enum.map(&AST.line_range/1)
       |> Enum.reject(&is_nil/1)
       |> Enum.map(& &1.start)
       |> MapSet.new()
