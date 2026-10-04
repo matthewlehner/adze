@@ -40,6 +40,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Removed `usage-rules.md` from the package. The skill covers agent use;
+  the library API, error shapes and conventions are in the moduledocs.
 - CLI write ops (`mv`, `extract`, `rename`, `extract-private`) now write by
   default. Pass `--dry-run` to preview. The `!` forms (`mv!`, `extract!`,
   `rename!`, `extract-private!`) are removed and exit with a pointer to the
