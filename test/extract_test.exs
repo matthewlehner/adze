@@ -1666,7 +1666,7 @@ defmodule AdzeExtractTest do
     end
   end
 
-  describe "extract_file/2 — cross-file caller rewriting (Session 6.5)" do
+  describe "extract_file/2 — cross-file caller rewriting" do
     # Project-wide caller fix-up: when extract moves a def out of
     # SourceModule into TargetModule, every other file that calls
     # SourceModule.target(...) (and pipe / capture variants) needs to
