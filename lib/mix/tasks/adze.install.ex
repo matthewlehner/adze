@@ -41,6 +41,13 @@ if Code.ensure_loaded?(Igniter) do
 
     use Igniter.Mix.Task
 
+    # Embedded at compile time: skill.md ships in the hex package next to
+    # lib/, so this works wherever adze's deps live (umbrella apps, a
+    # custom `deps_path`), unlike reading `deps/adze/skill.md` from the cwd.
+    @skill_source_path Path.expand("../../../skill.md", __DIR__)
+    @external_resource @skill_source_path
+    @skill_content File.read!(@skill_source_path)
+
     @claude_skill_path ".claude/skills/adze/SKILL.md"
     @codex_skill_path ".agents/skills/adze/SKILL.md"
     @claude_md "CLAUDE.md"
@@ -76,49 +83,25 @@ if Code.ensure_loaded?(Igniter) do
           {claude? || false, codex? || false}
         end
 
-      skill_content = read_skill_source()
-
       igniter
-      |> maybe_install_claude(claude?, skill_content)
-      |> maybe_install_codex(codex?, skill_content)
+      |> maybe_install_claude(claude?)
+      |> maybe_install_codex(codex?)
       |> add_completion_notice(claude?, codex?)
     end
 
-    defp read_skill_source do
-      path = Path.join(["deps", "adze", "skill.md"])
+    defp maybe_install_claude(igniter, false), do: igniter
 
-      if File.exists?(path) do
-        File.read!(path)
-      else
-        nil
-      end
-    end
-
-    defp maybe_install_claude(igniter, false, _content), do: igniter
-
-    defp maybe_install_claude(igniter, true, nil) do
-      Igniter.add_warning(igniter, """
-      Could not find deps/adze/skill.md — skipping Claude Code skill creation.
-      """)
-    end
-
-    defp maybe_install_claude(igniter, true, content) do
+    defp maybe_install_claude(igniter, true) do
       igniter
-      |> Igniter.create_new_file(@claude_skill_path, content, on_exists: :skip)
+      |> Igniter.create_new_file(@claude_skill_path, @skill_content, on_exists: :skip)
       |> patch_agent_file(@claude_md)
     end
 
-    defp maybe_install_codex(igniter, false, _content), do: igniter
+    defp maybe_install_codex(igniter, false), do: igniter
 
-    defp maybe_install_codex(igniter, true, nil) do
-      Igniter.add_warning(igniter, """
-      Could not find deps/adze/skill.md — skipping Codex skill creation.
-      """)
-    end
-
-    defp maybe_install_codex(igniter, true, content) do
+    defp maybe_install_codex(igniter, true) do
       igniter
-      |> Igniter.create_new_file(@codex_skill_path, content, on_exists: :skip)
+      |> Igniter.create_new_file(@codex_skill_path, @skill_content, on_exists: :skip)
       |> patch_agent_file(@agents_md)
     end
 
