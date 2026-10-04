@@ -95,7 +95,6 @@ defmodule Adze.ExtractPrivate do
 
   @type opts :: [
           definition: Definition.definition_spec(),
-          path: Path.t(),
           mix_root: Path.t(),
           files: %{Path.t() => String.t()},
           include_attrs: [atom()],
@@ -124,7 +123,6 @@ defmodule Adze.ExtractPrivate do
   @spec extract_private(String.t(), opts()) :: {:ok, result()} | {:error, term()}
   def extract_private(source, opts) when is_binary(source) and is_list(opts) do
     with {:ok, def_spec} <- fetch_opt(opts, :definition),
-         {:ok, _path} <- fetch_opt(opts, :path),
          {:ok, definition} <- find_definition(source, def_spec, opts),
          {:ok, to_kind} <- flip_kind(definition.kind),
          :ok <- ensure_public(definition),
@@ -151,7 +149,7 @@ defmodule Adze.ExtractPrivate do
   @spec extract_private_file(Path.t(), opts()) :: {:ok, result()} | {:error, term()}
   def extract_private_file(path, opts) when is_binary(path) do
     case File.read(path) do
-      {:ok, source} -> extract_private(source, Keyword.put(opts, :path, path))
+      {:ok, source} -> extract_private(source, opts)
       {:error, reason} -> {:error, {:file_read, reason}}
     end
   end

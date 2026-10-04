@@ -28,6 +28,21 @@ defmodule Adze.ExtractPrivateTest do
       refute result.new_source =~ ~r/^\s*def helper\(x\)/m
     end
 
+    test "works on a bare source string, without a :path" do
+      source = """
+      defmodule MyApp.Foo do
+        def public_api(x), do: helper(x) + 1
+        def helper(x), do: x * 2
+      end
+      """
+
+      assert {:ok, %{to_kind: :defp}} =
+               Adze.extract_private(source,
+                 definition: "helper/1",
+                 files: %{"lib/foo.ex" => source}
+               )
+    end
+
     test "flips defmacro to defmacrop" do
       source = """
       defmodule X do

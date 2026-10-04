@@ -17,6 +17,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the source and could call a moved def (`use Source` counts when
   `Source` defines `__using__`).
 - `deps`: calls in `when` guards now count as calls from the clause.
+- `extract_private/2` no longer requires an unused `:path` option, so the
+  documented `Adze.extract_private(source, definition: ...)` works.
 
 ### Known limitations
 
