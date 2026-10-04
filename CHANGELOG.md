@@ -46,6 +46,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   new behaviour. The library API (`Adze.mv/2`, `Adze.mv!/2`, …) is unchanged.
 - Agent docs (skill, agents snippet) no longer tell agents to dry-run before
   every write.
+- `skill.md` is about half the size (9.7 KB → 4.8 KB): one entry per op,
+  no recipes that repeat the op descriptions, and refusal details left to
+  the error messages.
 - `ls` (text): adjacent clauses of one function render as a single line
   spanning all of them, e.g. `p mv_error/2   L346–386  (10 clauses)`. JSON
   output still has one entry per clause.
