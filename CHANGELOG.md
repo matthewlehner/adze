@@ -22,6 +22,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   creates atoms from module labels.
 - `extract_private/2` no longer requires an unused `:path` option, so the
   documented `Adze.extract_private(source, definition: ...)` works.
+- Concurrent rewrites against different `mix_root`s no longer race on the
+  (VM-global) working directory.
 
 ### Known limitations
 

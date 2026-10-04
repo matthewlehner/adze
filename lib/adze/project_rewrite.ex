@@ -923,9 +923,22 @@ defmodule Adze.ProjectRewrite do
     end
   end
 
+  # Igniter resolves every path against the cwd (`Igniter.new/0`'s
+  # globbing, `prepare_for_write/1`, `Rewrite.write_all/1`), so working on
+  # another project root means `File.cd!/1`. The cwd is VM-global, not
+  # per-process: two `in_dir` calls racing on different roots would each
+  # see the other's directory. Every cd runs under one node-local lock, so
+  # concurrent adze operations queue instead of interleaving. The lock is
+  # re-entrant for the holding process (nested `in_dir` is fine), but it
+  # can't protect unrelated code that reads the cwd while a call is in
+  # flight — the cwd is restored as soon as `fun` returns.
   defp in_dir(nil, fun), do: fun.()
 
   defp in_dir(dir, fun) do
+    :global.trans({__MODULE__.Cwd, self()}, fn -> in_dir_locked(dir, fun) end, [node()])
+  end
+
+  defp in_dir_locked(dir, fun) do
     cwd = File.cwd!()
     target = Path.expand(dir)
 
