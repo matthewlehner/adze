@@ -45,20 +45,22 @@ defmodule Adze.Diff do
   # `{a_line_no, b_line_no, :eq | :del | :ins, text}`. Line numbers are
   # 1-indexed; `nil` when the line doesn't exist on that side.
   defp annotate(diff) do
-    {_, _, acc} =
+    {_, _, chunks} =
       Enum.reduce(diff, {1, 1, []}, fn
         {:eq, ls}, {a, b, acc} ->
-          {a + length(ls), b + length(ls),
-           acc ++ Enum.with_index(ls, fn l, i -> {a + i, b + i, :eq, l} end)}
+          entries = Enum.with_index(ls, fn l, i -> {a + i, b + i, :eq, l} end)
+          {a + length(ls), b + length(ls), [entries | acc]}
 
         {:del, ls}, {a, b, acc} ->
-          {a + length(ls), b, acc ++ Enum.with_index(ls, fn l, i -> {a + i, nil, :del, l} end)}
+          entries = Enum.with_index(ls, fn l, i -> {a + i, nil, :del, l} end)
+          {a + length(ls), b, [entries | acc]}
 
         {:ins, ls}, {a, b, acc} ->
-          {a, b + length(ls), acc ++ Enum.with_index(ls, fn l, i -> {nil, b + i, :ins, l} end)}
+          entries = Enum.with_index(ls, fn l, i -> {nil, b + i, :ins, l} end)
+          {a, b + length(ls), [entries | acc]}
       end)
 
-    acc
+    chunks |> Enum.reverse() |> Enum.concat()
   end
 
   defp build_hunks(entries, context) do
