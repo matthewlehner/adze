@@ -629,8 +629,9 @@ defmodule Adze.Formatter do
 
   defp format_definition(%{kind: :defmodule, name: name, range: r, children: kids}, depth) do
     [
+      "\n",
       indent(depth),
-      "\ndefmodule ",
+      "defmodule ",
       name,
       "   ",
       range_str(r),
@@ -641,8 +642,9 @@ defmodule Adze.Formatter do
 
   defp format_definition(%{kind: :defprotocol, name: name, range: r, children: kids}, depth) do
     [
+      "\n",
       indent(depth),
-      "\ndefprotocol ",
+      "defprotocol ",
       name,
       "   ",
       range_str(r),

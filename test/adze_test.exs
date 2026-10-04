@@ -156,6 +156,21 @@ defmodule AdzeTest do
     end
   end
 
+  describe "ls text rendering of nested modules" do
+    setup do
+      {:ok, outline} = Outline.outline_file(@fixture)
+      %{text: Adze.Formatter.format(outline, :text)}
+    end
+
+    test "a nested defmodule is indented under its parent", %{text: text} do
+      assert text =~ ~r/^  defmodule Inner   L35–39$/m
+    end
+
+    test "no whitespace-only lines", %{text: text} do
+      refute text =~ ~r/^[ \t]+$/m
+    end
+  end
+
   describe "unquoted def names" do
     @unquoted_source """
     defmodule X do
