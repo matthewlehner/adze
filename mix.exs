@@ -12,6 +12,13 @@ defmodule Adze.MixProject do
       start_permanent: Mix.env() == :prod,
       test_ignore_filters: [&String.contains?(&1, "/fixtures/")],
       deps: deps(),
+      aliases: aliases(),
+      dialyzer: [
+        plt_add_apps: [:mix, :ex_unit],
+        plt_local_path: "priv/plts",
+        plt_core_path: "priv/plts",
+        ignore_warnings: ".dialyzer_ignore.exs"
+      ],
       docs: docs(),
       package: package(),
       name: "Adze",
@@ -33,7 +40,20 @@ defmodule Adze.MixProject do
       {:sourceror, "~> 1.7"},
       {:igniter, "~> 0.8"},
       {:ex_doc, "~> 0.35", only: :dev, runtime: false},
+      {:credo, "~> 1.7", only: [:dev, :test], runtime: false},
+      {:dialyxir, "~> 1.4", only: [:dev, :test], runtime: false},
       {:usage_rules, "~> 1.2", only: [:dev]}
+    ]
+  end
+
+  defp aliases do
+    [
+      lint: [
+        "format --check-formatted",
+        "compile --warnings-as-errors --force",
+        "credo --strict",
+        "dialyzer"
+      ]
     ]
   end
 

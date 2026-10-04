@@ -28,3 +28,6 @@ adze-*.tar
 .elixir_ls/
 .expert/
 .claude/
+
+# Dialyzer PLTs.
+/priv/plts/
