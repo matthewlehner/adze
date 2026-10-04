@@ -171,6 +171,42 @@ defmodule AdzeTest do
     end
   end
 
+  describe "ls text rendering of multi-clause functions" do
+    setup do
+      source = """
+      defmodule X do
+        def f(0), do: :zero
+        def f(n) when n > 0, do: :pos
+        def f(_), do: :neg
+
+        def g(x), do: x
+        defp f(a, b), do: {a, b}
+        def g(y, z), do: {y, z}
+      end
+      """
+
+      {:ok, outline} = Outline.outline(source)
+      %{outline: outline, text: Adze.Formatter.format(outline, :text)}
+    end
+
+    test "adjacent clauses render as one line spanning all of them", %{text: text} do
+      assert text =~ ~r/^\s+f\/1 when …   L2–4  \(3 clauses\)$/m
+      assert length(Regex.scan(~r/f\/1/, text)) == 1
+    end
+
+    test "single-clause defs and different arities stay separate", %{text: text} do
+      assert text =~ ~r/^\s+g\/1   L6$/m
+      assert text =~ ~r/^\s*p f\/2   L7$/m
+      assert text =~ ~r/^\s+g\/2   L8$/m
+    end
+
+    test "JSON keeps one entry per clause", %{outline: outline} do
+      json = Adze.Formatter.format(outline, :json)
+      [%{"children" => kids}] = JSON.decode!(json)["definitions"]
+      assert Enum.count(kids, &(&1["name"] == "f" and &1["arity"] == 1)) == 3
+    end
+  end
+
   describe "unquoted def names" do
     @unquoted_source """
     defmodule X do

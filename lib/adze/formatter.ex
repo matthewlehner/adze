@@ -18,7 +18,7 @@ defmodule Adze.Formatter do
 
     [
       "# #{file_line}",
-      Enum.map(outline.definitions, &format_definition(&1, 0))
+      format_definitions(outline.definitions, 0)
     ]
     |> IO.iodata_to_binary()
   end
@@ -601,6 +601,42 @@ defmodule Adze.Formatter do
     end)
   end
 
+  # Text only: adjacent clauses of one function render as a single line
+  # spanning all of them. JSON keeps one entry per clause.
+  defp format_definitions(defs, depth) do
+    defs
+    |> Enum.chunk_while(nil, &chunk_clauses/2, &flush_clauses/1)
+    |> Enum.map(&format_definition(&1, depth))
+  end
+
+  @fun_kinds [:def, :defp, :defmacro, :defmacrop, :defguard, :defguardp, :defdelegate]
+
+  defp chunk_clauses(%{kind: k} = d, nil) when k in @fun_kinds,
+    do: {:cont, Map.put(d, :clauses, 1)}
+
+  defp chunk_clauses(d, nil), do: {:cont, d, nil}
+
+  defp chunk_clauses(%{kind: k, name: n, arity: a} = d, %{kind: k, name: n, arity: a} = acc)
+       when n != nil do
+    {:cont,
+     %{
+       acc
+       | range: merge_range(acc.range, d.range),
+         guards: acc.guards || d.guards,
+         clauses: acc.clauses + 1
+     }}
+  end
+
+  defp chunk_clauses(%{kind: k} = d, acc) when k in @fun_kinds,
+    do: {:cont, acc, Map.put(d, :clauses, 1)}
+
+  defp chunk_clauses(d, acc), do: {:cont, acc, d}
+  defp flush_clauses(nil), do: {:cont, nil}
+  defp flush_clauses(acc), do: {:cont, acc, nil}
+
+  defp merge_range(%{start: s}, %{end: e}), do: %{start: s, end: e}
+  defp merge_range(a, _), do: a
+
   defp format_definition(%{kind: :defmodule, name: name, range: r, children: kids}, depth) do
     [
       "\n",
@@ -610,7 +646,7 @@ defmodule Adze.Formatter do
       "   ",
       range_str(r),
       "\n",
-      Enum.map(kids, &format_definition(&1, depth + 1))
+      format_definitions(kids, depth + 1)
     ]
   end
 
@@ -623,7 +659,7 @@ defmodule Adze.Formatter do
       "   ",
       range_str(r),
       "\n",
-      Enum.map(kids, &format_definition(&1, depth + 1))
+      format_definitions(kids, depth + 1)
     ]
   end
 
@@ -631,8 +667,11 @@ defmodule Adze.Formatter do
     [indent(depth), "defimpl ", name, "   ", range_str(r), "\n"]
   end
 
-  defp format_definition(%{kind: kind, name: name, arity: arity, guards: guards, range: r}, depth)
-       when kind in [:def, :defp, :defmacro, :defmacrop, :defguard, :defguardp, :defdelegate] do
+  defp format_definition(
+         %{kind: kind, name: name, arity: arity, guards: guards, range: r} = d,
+         depth
+       )
+       when kind in @fun_kinds do
     {marker, private_tag} =
       case kind do
         :def -> {" ", ""}
@@ -657,6 +696,7 @@ defmodule Adze.Formatter do
       private_tag,
       "   ",
       range_str(r),
+      clauses_str(Map.get(d, :clauses, 1)),
       "\n"
     ]
   end
@@ -697,6 +737,9 @@ defmodule Adze.Formatter do
 
   defp indent(0), do: ""
   defp indent(n), do: String.duplicate("  ", n)
+
+  defp clauses_str(1), do: ""
+  defp clauses_str(n), do: "  (#{n} clauses)"
 
   defp range_str(nil), do: "?"
   defp range_str(%{start: s, end: e}) when s == e, do: "L#{s}"
