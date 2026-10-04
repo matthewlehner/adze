@@ -348,6 +348,8 @@ defmodule Adze.Definition do
     |> Enum.map(&build_definition(&1, module_name))
   end
 
+  # One branch per kind of node; the state machine reads best in one place.
+  # credo:disable-for-next-line Credo.Check.Refactor.CyclomaticComplexity
   defp step(node, {groups, attrs, intervening, current}, allowlist) do
     cond do
       attachable_attr?(node, allowlist) ->

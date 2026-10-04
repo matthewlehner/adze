@@ -203,7 +203,7 @@ defmodule Adze.FindCallers do
 
   # --- alias resolution --------------------------------------------------
 
-  defp join_parts(parts), do: parts |> Enum.map(&Atom.to_string/1) |> Enum.join(".")
+  defp join_parts(parts), do: parts |> Enum.map_join(".", &Atom.to_string/1)
 
   # --- pipe expansion (qualified-call variant only) ----------------------
 

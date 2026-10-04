@@ -15,20 +15,22 @@ defmodule Adze.CLI do
   """
 
   alias Adze.{
-    Outline,
-    Deps,
-    LsDeps,
     Aliases,
     Definition,
-    Move,
+    Deps,
     Extract,
     ExtractPrivate,
-    Rename,
     FindCallers,
-    Formatter
+    Formatter,
+    LsDeps,
+    Move,
+    Outline,
+    Rename
   }
 
   @doc false
+  # One flat clause per op; splitting the dispatch wouldn't make it simpler.
+  # credo:disable-for-next-line Credo.Check.Refactor.CyclomaticComplexity
   def main(argv) do
     case parse(argv) do
       :help ->
@@ -179,74 +181,88 @@ defmodule Adze.CLI do
       {:ok, result} ->
         IO.write(Formatter.format_extract_private(result, args.format))
 
-      {:error, {:file_read, reason}} ->
-        die("could not read #{args.file}: #{:file.format_error(reason)}")
-
-      {:error, {:file_write, reason}} ->
-        die("could not write #{args.file}: #{format_write_error(reason)}")
-
-      {:error, {:parse, reason}} ->
-        die("parse error: #{inspect(reason)}")
-
-      {:error, {:not_found, :definition}} ->
-        die("--definition not found in #{args.file}")
-
-      {:error, {:ambiguous_source_module, %{definition: d, modules: mods}}} ->
-        die(
-          "definition #{inspect(d)} exists in multiple modules: #{Enum.join(mods, ", ")}.\n" <>
-            "Pass --from-module to disambiguate."
-        )
-
-      {:error, {:from_module_mismatch, %{from: from, candidates: mods}}} ->
-        die("--from-module #{from} doesn't match. Candidates: #{Enum.join(mods, ", ")}")
-
-      {:error, {:already_private, %{kind: k}}} ->
-        die("definition is already private (#{k}). Nothing to do.")
-
-      {:error, :cannot_be_private} ->
-        die(
-          "defdelegate has no private form. Convert to a regular `defp` " <>
-            "delegating to the target manually if needed."
-        )
-
-      {:error, {:external_callers, refs}} ->
-        die(format_externals_error(refs))
-
-      {:error, {:behaviour_callback, %{definition: {n, a}, module: mod, reason: reason}}} ->
-        why =
-          case reason do
-            {:impl, value} -> "it is marked `@impl #{value}`"
-            {:behaviour, b} -> "#{b} declares it as a callback"
-          end
-
-        die(
-          "extract-private refused — #{mod}.#{n}/#{a} is a behaviour callback " <>
-            "(#{why}).\nCallbacks are invoked dynamically and must stay public."
-        )
-
-      {:error,
-       {:possible_callback, %{definition: {n, a}, module: mod, uses: uses, behaviours: behs}}} ->
-        decls =
-          Enum.map(uses, &"use #{&1}") ++ Enum.map(behs, &"@behaviour #{&1}")
-
-        die(
-          "extract-private refused — #{mod}.#{n}/#{a} may be called dynamically: " <>
-            "the module declares #{Enum.join(decls, ", ")}, which adze can't " <>
-            "load to check for callbacks.\n" <>
-            "Callbacks and dispatched functions (GenServer callbacks, Phoenix " <>
-            "actions, LiveView callbacks) have no visible callers.\n" <>
-            "Pass --force if you've verified #{n}/#{a} isn't one of them."
-        )
-
-      {:error, {:unsupported_module, module}} ->
-        die(unsupported_module_message(module))
-
-      {:error, {:ambiguous_attribute, _} = err} ->
-        die("ambiguous attribute attachment: #{inspect(err)}")
-
       {:error, reason} ->
-        die("extract-private failed: #{inspect(reason)}")
+        die(extract_private_error(reason, args))
     end
+  end
+
+  defp extract_private_error({:file_read, reason}, args) do
+    "could not read #{args.file}: #{:file.format_error(reason)}"
+  end
+
+  defp extract_private_error({:file_write, reason}, args) do
+    "could not write #{args.file}: #{format_write_error(reason)}"
+  end
+
+  defp extract_private_error({:parse, reason}, _args) do
+    "parse error: #{inspect(reason)}"
+  end
+
+  defp extract_private_error({:not_found, :definition}, args) do
+    "--definition not found in #{args.file}"
+  end
+
+  defp extract_private_error({:ambiguous_source_module, %{definition: d, modules: mods}}, _args) do
+    "definition #{inspect(d)} exists in multiple modules: #{Enum.join(mods, ", ")}.\n" <>
+      "Pass --from-module to disambiguate."
+  end
+
+  defp extract_private_error({:from_module_mismatch, %{from: from, candidates: mods}}, _args) do
+    "--from-module #{from} doesn't match. Candidates: #{Enum.join(mods, ", ")}"
+  end
+
+  defp extract_private_error({:already_private, %{kind: k}}, _args) do
+    "definition is already private (#{k}). Nothing to do."
+  end
+
+  defp extract_private_error(:cannot_be_private, _args) do
+    "defdelegate has no private form. Convert to a regular `defp` " <>
+      "delegating to the target manually if needed."
+  end
+
+  defp extract_private_error({:external_callers, refs}, _args) do
+    format_externals_error(refs)
+  end
+
+  defp extract_private_error(
+         {:behaviour_callback, %{definition: {n, a}, module: mod, reason: reason}},
+         _args
+       ) do
+    why =
+      case reason do
+        {:impl, value} -> "it is marked `@impl #{value}`"
+        {:behaviour, b} -> "#{b} declares it as a callback"
+      end
+
+    "extract-private refused — #{mod}.#{n}/#{a} is a behaviour callback " <>
+      "(#{why}).\nCallbacks are invoked dynamically and must stay public."
+  end
+
+  defp extract_private_error(
+         {:possible_callback, %{definition: {n, a}, module: mod, uses: uses, behaviours: behs}},
+         _args
+       ) do
+    decls =
+      Enum.map(uses, &"use #{&1}") ++ Enum.map(behs, &"@behaviour #{&1}")
+
+    "extract-private refused — #{mod}.#{n}/#{a} may be called dynamically: " <>
+      "the module declares #{Enum.join(decls, ", ")}, which adze can't " <>
+      "load to check for callbacks.\n" <>
+      "Callbacks and dispatched functions (GenServer callbacks, Phoenix " <>
+      "actions, LiveView callbacks) have no visible callers.\n" <>
+      "Pass --force if you've verified #{n}/#{a} isn't one of them."
+  end
+
+  defp extract_private_error({:unsupported_module, module}, _args) do
+    unsupported_module_message(module)
+  end
+
+  defp extract_private_error({:ambiguous_attribute, _} = err, _args) do
+    "ambiguous attribute attachment: #{inspect(err)}"
+  end
+
+  defp extract_private_error(reason, _args) do
+    "extract-private failed: #{inspect(reason)}"
   end
 
   defp unsupported_module_message(module) do
@@ -258,11 +274,10 @@ defmodule Adze.CLI do
     lines =
       refs
       |> Enum.sort_by(&{&1.path, &1.line})
-      |> Enum.map(fn r ->
+      |> Enum.map_join("\n", fn r ->
         mod = r[:in_module] || "?"
         "  #{r.path}:#{r.line}  (#{mod})  #{r.snippet}"
       end)
-      |> Enum.join("\n")
 
     """
     extract-private refused — #{length(refs)} external caller(s) would compile-break:
@@ -327,40 +342,51 @@ defmodule Adze.CLI do
       {:ok, result} ->
         IO.write(Formatter.format_mv(result, format))
 
-      {:error, {:file_read, reason}} ->
-        die("could not read #{file}: #{:file.format_error(reason)}")
-
-      {:error, {:parse, reason}} ->
-        die("parse error: #{inspect(reason)}")
-
-      {:error, {:file_write, reason}} ->
-        die("could not write #{file}: #{format_write_error(reason)}")
-
-      {:error, {:format, exception}} ->
-        die("formatting failed after the move: #{Exception.message(exception)}")
-
-      {:error, {:not_found, :definition}} ->
-        die("--definition not found in #{file}")
-
-      {:error, {:not_found, :before}} ->
-        die("--before target not found in #{file}")
-
-      {:error, :self_anchor} ->
-        die("--definition and --before refer to the same definition")
-
-      {:error, {:cross_module_move, info}} ->
-        die(
-          "cross-module move: #{inspect(info.definition)} is in #{info.definition_module}, " <>
-            "but #{inspect(info.before)} is in #{info.before_module}. " <>
-            "mv only reorders within a single module."
-        )
-
-      {:error, {:ambiguous_attribute, _} = err} ->
-        die("ambiguous attribute attachment: #{inspect(err)}")
-
       {:error, reason} ->
-        die("mv failed: #{inspect(reason)}")
+        die(mv_error(reason, file))
     end
+  end
+
+  defp mv_error({:file_read, reason}, file) do
+    "could not read #{file}: #{:file.format_error(reason)}"
+  end
+
+  defp mv_error({:parse, reason}, _file) do
+    "parse error: #{inspect(reason)}"
+  end
+
+  defp mv_error({:file_write, reason}, file) do
+    "could not write #{file}: #{format_write_error(reason)}"
+  end
+
+  defp mv_error({:format, exception}, _file) do
+    "formatting failed after the move: #{Exception.message(exception)}"
+  end
+
+  defp mv_error({:not_found, :definition}, file) do
+    "--definition not found in #{file}"
+  end
+
+  defp mv_error({:not_found, :before}, file) do
+    "--before target not found in #{file}"
+  end
+
+  defp mv_error(:self_anchor, _file) do
+    "--definition and --before refer to the same definition"
+  end
+
+  defp mv_error({:cross_module_move, info}, _file) do
+    "cross-module move: #{inspect(info.definition)} is in #{info.definition_module}, " <>
+      "but #{inspect(info.before)} is in #{info.before_module}. " <>
+      "mv only reorders within a single module."
+  end
+
+  defp mv_error({:ambiguous_attribute, _} = err, _file) do
+    "ambiguous attribute attachment: #{inspect(err)}"
+  end
+
+  defp mv_error(reason, _file) do
+    "mv failed: #{inspect(reason)}"
   end
 
   defp run_extract(%{file: nil}, _opts), do: die("--file is required\n\n" <> help())
@@ -385,89 +411,95 @@ defmodule Adze.CLI do
       {:ok, result} ->
         IO.write(Formatter.format_extract(result, args.format))
 
-      {:error, {:file_read, reason}} ->
-        die("could not read #{args.file}: #{:file.format_error(reason)}")
-
-      {:error, {:file_write, reason}} ->
-        die("could not write: #{format_write_error(reason)}")
-
-      {:error, {:format, exception}} ->
-        die("formatting failed after the extract: #{Exception.message(exception)}")
-
-      {:error, {:render, exception}} ->
-        die("rendering the extracted AST failed: #{Exception.message(exception)}")
-
-      {:error, {:parse, reason}} ->
-        die("parse error: #{inspect(reason)}")
-
-      {:error, {:target_exists, path}} ->
-        die(
-          "target file already exists: #{path}\n" <>
-            "(adze refuses to overwrite; pick another --module or delete the file)"
-        )
-
-      {:error, {:bad_module_name, name}} ->
-        die("bad --module value: #{name} (expected dot-separated CamelCase, e.g. MyApp.Helpers)")
-
-      {:error, {:unsupported_module, module}} ->
-        die(unsupported_module_message(module))
-
-      {:error, {:not_found, key}} ->
-        die("definition not found in #{args.file}: #{inspect(key)}")
-
-      {:error, {:ambiguous_source_module, %{definition: d, modules: mods}}} ->
-        die(
-          "definition #{inspect(d)} exists in multiple modules: #{Enum.join(mods, ", ")}.\n" <>
-            "Pass --from-module to disambiguate."
-        )
-
-      {:error, {:from_module_mismatch, %{from: from, candidates: mods}}} ->
-        die(
-          "--from-module #{from} doesn't contain the definition. " <>
-            "Candidates: #{Enum.join(mods, ", ")}"
-        )
-
-      {:error, {:typep_referenced, %{type: {n, a}, source: mod}}} ->
-        die(
-          "extracted @spec references @typep #{n}/#{a} in #{mod}, which can't be " <>
-            "qualified across modules.\nWiden the @typep to @type in source first, " <>
-            "then re-run extract."
-        )
-
-      {:error, {:private_macro_referenced, %{definitions: defs, source: mod}}} ->
-        names = Enum.map_join(defs, ", ", fn {kind, n, a} -> "#{kind} #{n}/#{a}" end)
-
-        die(
-          "extracted code uses macros/guards that stay in #{mod}: #{names}.\n" <>
-            "The target would need `require #{mod}` (and private ones must be public), " <>
-            "or move them first, then re-run extract."
-        )
-
-      {:error, {:moved_macro_referenced, %{definitions: defs, source: mod}}} ->
-        names = Enum.map_join(defs, ", ", fn {kind, n, a} -> "#{kind} #{n}/#{a}" end)
-
-        die(
-          "extracting #{names} would leave callers (in #{mod} or other files) " <>
-            "calling it remotely without `require`.\n" <>
-            "Add `require <Target>` to each caller yourself after moving, or " <>
-            "move the callers too."
-        )
-
-      {:error, {:imported_by, %{source: mod, files: files, definitions: defs}}} ->
-        names = Enum.map_join(defs, ", ", fn {n, a} -> "#{n}/#{a}" end)
-
-        die(
-          "#{mod} is imported by #{Enum.join(files, ", ")}; bare calls there to " <>
-            "#{names} can't be retargeted.\nSwitch those files to qualified calls " <>
-            "(or import the new module) first, then re-run extract."
-        )
-
-      {:error, {:ambiguous_attribute, _} = err} ->
-        die("ambiguous attribute attachment: #{inspect(err)}")
-
       {:error, reason} ->
-        die("extract failed: #{inspect(reason)}")
+        die(extract_error(reason, args))
     end
+  end
+
+  defp extract_error({:file_read, reason}, args) do
+    "could not read #{args.file}: #{:file.format_error(reason)}"
+  end
+
+  defp extract_error({:file_write, reason}, _args) do
+    "could not write: #{format_write_error(reason)}"
+  end
+
+  defp extract_error({:format, exception}, _args) do
+    "formatting failed after the extract: #{Exception.message(exception)}"
+  end
+
+  defp extract_error({:render, exception}, _args) do
+    "rendering the extracted AST failed: #{Exception.message(exception)}"
+  end
+
+  defp extract_error({:parse, reason}, _args) do
+    "parse error: #{inspect(reason)}"
+  end
+
+  defp extract_error({:target_exists, path}, _args) do
+    "target file already exists: #{path}\n" <>
+      "(adze refuses to overwrite; pick another --module or delete the file)"
+  end
+
+  defp extract_error({:bad_module_name, name}, _args) do
+    "bad --module value: #{name} (expected dot-separated CamelCase, e.g. MyApp.Helpers)"
+  end
+
+  defp extract_error({:unsupported_module, module}, _args) do
+    unsupported_module_message(module)
+  end
+
+  defp extract_error({:not_found, key}, args) do
+    "definition not found in #{args.file}: #{inspect(key)}"
+  end
+
+  defp extract_error({:ambiguous_source_module, %{definition: d, modules: mods}}, _args) do
+    "definition #{inspect(d)} exists in multiple modules: #{Enum.join(mods, ", ")}.\n" <>
+      "Pass --from-module to disambiguate."
+  end
+
+  defp extract_error({:from_module_mismatch, %{from: from, candidates: mods}}, _args) do
+    "--from-module #{from} doesn't contain the definition. " <>
+      "Candidates: #{Enum.join(mods, ", ")}"
+  end
+
+  defp extract_error({:typep_referenced, %{type: {n, a}, source: mod}}, _args) do
+    "extracted @spec references @typep #{n}/#{a} in #{mod}, which can't be " <>
+      "qualified across modules.\nWiden the @typep to @type in source first, " <>
+      "then re-run extract."
+  end
+
+  defp extract_error({:private_macro_referenced, %{definitions: defs, source: mod}}, _args) do
+    names = Enum.map_join(defs, ", ", fn {kind, n, a} -> "#{kind} #{n}/#{a}" end)
+
+    "extracted code uses macros/guards that stay in #{mod}: #{names}.\n" <>
+      "The target would need `require #{mod}` (and private ones must be public), " <>
+      "or move them first, then re-run extract."
+  end
+
+  defp extract_error({:moved_macro_referenced, %{definitions: defs, source: mod}}, _args) do
+    names = Enum.map_join(defs, ", ", fn {kind, n, a} -> "#{kind} #{n}/#{a}" end)
+
+    "extracting #{names} would leave callers (in #{mod} or other files) " <>
+      "calling it remotely without `require`.\n" <>
+      "Add `require <Target>` to each caller yourself after moving, or " <>
+      "move the callers too."
+  end
+
+  defp extract_error({:imported_by, %{source: mod, files: files, definitions: defs}}, _args) do
+    names = Enum.map_join(defs, ", ", fn {n, a} -> "#{n}/#{a}" end)
+
+    "#{mod} is imported by #{Enum.join(files, ", ")}; bare calls there to " <>
+      "#{names} can't be retargeted.\nSwitch those files to qualified calls " <>
+      "(or import the new module) first, then re-run extract."
+  end
+
+  defp extract_error({:ambiguous_attribute, _} = err, _args) do
+    "ambiguous attribute attachment: #{inspect(err)}"
+  end
+
+  defp extract_error(reason, _args) do
+    "extract failed: #{inspect(reason)}"
   end
 
   defp run_rename(%{from: nil}, _opts), do: die("--from is required\n\n" <> help())
@@ -485,34 +517,43 @@ defmodule Adze.CLI do
       {:ok, result} ->
         IO.write(Formatter.format_rename(result, args.format))
 
-      {:error, {:missing_opt, key}} ->
-        die("--#{key} is required\n\n" <> help())
-
-      {:error, {:bad_module_name, key, value}} ->
-        die("--#{key} must be dot-separated CamelCase, got: #{inspect(value)}")
-
-      {:error, {:same_module, mod}} ->
-        die("--from and --to are the same module: #{inspect(mod)}")
-
-      {:error, {:issues, issues}} ->
-        die("rename refused — Igniter reported issues:\n  - " <> Enum.join(issues, "\n  - "))
-
-      {:error, {:surviving_references, refs}} ->
-        die(format_surviving_error(refs))
-
-      {:error, {:file_write, reason}} ->
-        die("could not write: #{format_write_error(reason)}")
-
       {:error, reason} ->
-        die("rename failed: #{inspect(reason)}")
+        die(rename_error(reason))
     end
+  end
+
+  defp rename_error({:missing_opt, key}) do
+    "--#{key} is required\n\n" <> help()
+  end
+
+  defp rename_error({:bad_module_name, key, value}) do
+    "--#{key} must be dot-separated CamelCase, got: #{inspect(value)}"
+  end
+
+  defp rename_error({:same_module, mod}) do
+    "--from and --to are the same module: #{inspect(mod)}"
+  end
+
+  defp rename_error({:issues, issues}) do
+    "rename refused — Igniter reported issues:\n  - " <> Enum.join(issues, "\n  - ")
+  end
+
+  defp rename_error({:surviving_references, refs}) do
+    format_surviving_error(refs)
+  end
+
+  defp rename_error({:file_write, reason}) do
+    "could not write: #{format_write_error(reason)}"
+  end
+
+  defp rename_error(reason) do
+    "rename failed: #{inspect(reason)}"
   end
 
   defp format_surviving_error(refs) do
     lines =
       refs
-      |> Enum.map(fn %{path: p, line: l, short: s} -> "  #{p}:#{l}  #{s}.…" end)
-      |> Enum.join("\n")
+      |> Enum.map_join("\n", fn %{path: p, line: l, short: s} -> "  #{p}:#{l}  #{s}.…" end)
 
     """
     rename! refused — the rewrite would leave #{length(refs)} surviving bare-alias \
@@ -534,22 +575,23 @@ defmodule Adze.CLI do
   defp filter_definition(deps, nil), do: {:ok, deps}
 
   defp filter_definition(deps, spec) do
-    with {:ok, {name, arity}} <-
-           Definition.resolve_spec(spec, Enum.flat_map(deps.modules, & &1.defs)) do
-      modules =
-        deps.modules
-        |> Enum.map(fn m ->
-          %{m | defs: Enum.filter(m.defs, &(&1.name == name and &1.arity == arity))}
-        end)
-        |> Enum.reject(&(&1.defs == []))
+    case Definition.resolve_spec(spec, Enum.flat_map(deps.modules, & &1.defs)) do
+      {:ok, {name, arity}} ->
+        modules =
+          deps.modules
+          |> Enum.map(fn m ->
+            %{m | defs: Enum.filter(m.defs, &(&1.name == name and &1.arity == arity))}
+          end)
+          |> Enum.reject(&(&1.defs == []))
 
-      if modules == [] do
-        {:error, "--definition #{spec} not found"}
-      else
-        {:ok, %{deps | modules: modules}}
-      end
-    else
-      {:error, _} -> {:error, "bad --definition value: #{spec} (expected name/arity)"}
+        if modules == [] do
+          {:error, "--definition #{spec} not found"}
+        else
+          {:ok, %{deps | modules: modules}}
+        end
+
+      {:error, _} ->
+        {:error, "bad --definition value: #{spec} (expected name/arity)"}
     end
   end
 
@@ -660,6 +702,7 @@ defmodule Adze.CLI do
 
   defp format_write_error(other), do: inspect(other)
 
+  @spec die(String.t()) :: no_return()
   defp die(msg) do
     Mix.raise(String.trim_trailing(msg))
   end

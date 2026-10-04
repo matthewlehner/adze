@@ -70,15 +70,17 @@ defmodule Adze.LsDeps do
       deps.modules
       |> Enum.filter(&has_def?(&1, name, arity))
       |> Enum.map(fn m ->
-        {root, _visited} = build_tree(m, definition, MapSet.new())
+        {root, _visited} = build_tree(m, definition, %{})
         %{name: m.name, root: root}
       end)
 
     %{file: deps[:file], definition: definition, modules: modules}
   end
 
+  # `visited` is a plain map used as a set (`MapSet` trips a Dialyzer
+  # opaque-type false positive here).
   defp build_tree(mod, {name, arity} = definition, visited) do
-    visited = MapSet.put(visited, definition)
+    visited = Map.put(visited, definition, true)
 
     case find_def(mod, name, arity) do
       nil ->
@@ -87,7 +89,7 @@ defmodule Adze.LsDeps do
       entry ->
         {children_rev, visited} =
           Enum.reduce(entry.calls, {[], visited}, fn callee, {acc, v} ->
-            if MapSet.member?(v, callee) do
+            if Map.has_key?(v, callee) do
               {[repeat_node(mod, callee) | acc], v}
             else
               {child, v2} = build_tree(mod, callee, v)

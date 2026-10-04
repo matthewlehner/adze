@@ -99,5 +99,5 @@ defmodule Adze.Names do
   defp qualify(prefix, name), do: prefix <> "." <> name
 
   defp join_atoms([]), do: ""
-  defp join_atoms(parts), do: parts |> Enum.map(&Atom.to_string/1) |> Enum.join(".")
+  defp join_atoms(parts), do: parts |> Enum.map_join(".", &Atom.to_string/1)
 end

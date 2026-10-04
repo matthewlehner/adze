@@ -166,7 +166,7 @@ defmodule Adze.Formatter do
   end
 
   defp format_target(%{module: m, function: f, arity: a}) when is_list(a) do
-    [m, ".", to_string(f), "/", a |> Enum.map(&Integer.to_string/1) |> Enum.join(",")]
+    [m, ".", to_string(f), "/", Enum.map_join(a, ",", &Integer.to_string/1)]
   end
 
   defp format_target(%{module: m, function: f, arity: a}) do
@@ -426,84 +426,6 @@ defmodule Adze.Formatter do
   end
 
   def format_extract(result, :text) do
-    caller_block =
-      case Map.get(result, :caller_diffs, %{}) do
-        m when map_size(m) == 0 ->
-          []
-
-        m ->
-          entries =
-            m
-            |> Enum.sort_by(fn {path, _} -> path end)
-            |> Enum.map(fn {path, diff} -> ["\n# caller: ", path, "\n", diff] end)
-
-          ["\n# caller diffs\n", entries]
-      end
-
-    dropped_block =
-      case Map.get(result, :dropped_directives, []) do
-        [] ->
-          []
-
-        dropped ->
-          # use/import/require are never copied to the target (the
-          # tool can't know without macro expansion whether the
-          # closure needs them). Surface here so the AI can decide
-          # what to add back to the target if compile complains.
-          entries =
-            dropped
-            |> Enum.sort_by(& &1.line)
-            |> Enum.map(fn d ->
-              ["  source:", Integer.to_string(d.line), "  ", d.text, "\n"]
-            end)
-
-          [
-            "\n# dropped directives (use / import / require)\n",
-            "# add back to the new target module if the build needs them.\n",
-            entries
-          ]
-      end
-
-    promoted_block =
-      case Map.get(result, :promoted, []) do
-        [] ->
-          []
-
-        promoted ->
-          entries =
-            Enum.map(promoted, fn {name, arity} ->
-              ["  ", Atom.to_string(name), "/", Integer.to_string(arity), "\n"]
-            end)
-
-          [
-            "\n# promoted to public in ",
-            result.target_module,
-            " (was private; marked @doc false)\n",
-            entries
-          ]
-      end
-
-    promoted_in_source_block =
-      case Map.get(result, :promoted_in_source, []) do
-        [] ->
-          []
-
-        promoted ->
-          entries =
-            Enum.map(promoted, fn {name, arity} ->
-              ["  ", Atom.to_string(name), "/", Integer.to_string(arity), "\n"]
-            end)
-
-          [
-            "\n# promoted to public in ",
-            result.source_module,
-            " (private helper still used by the source, now called from ",
-            result.target_module,
-            "; marked @doc false)\n",
-            entries
-          ]
-      end
-
     IO.iodata_to_binary([
       "# new file: ",
       result.target_path,
@@ -517,11 +439,63 @@ defmodule Adze.Formatter do
         "" -> "(no changes)\n"
         d -> d
       end,
-      caller_block,
-      promoted_block,
-      promoted_in_source_block,
-      dropped_block
+      extract_caller_block(Map.get(result, :caller_diffs, %{})),
+      extract_promoted_block(
+        Map.get(result, :promoted, []),
+        [" (was private; marked @doc false)\n"],
+        result.target_module
+      ),
+      extract_promoted_block(
+        Map.get(result, :promoted_in_source, []),
+        [
+          " (private helper still used by the source, now called from ",
+          result.target_module,
+          "; marked @doc false)\n"
+        ],
+        result.source_module
+      ),
+      extract_dropped_block(Map.get(result, :dropped_directives, []))
     ])
+  end
+
+  defp extract_caller_block(diffs) when map_size(diffs) == 0, do: []
+
+  defp extract_caller_block(diffs) do
+    entries =
+      diffs
+      |> Enum.sort_by(fn {path, _} -> path end)
+      |> Enum.map(fn {path, diff} -> ["\n# caller: ", path, "\n", diff] end)
+
+    ["\n# caller diffs\n", entries]
+  end
+
+  defp extract_promoted_block([], _note, _module), do: []
+
+  defp extract_promoted_block(promoted, note, module) do
+    entries =
+      Enum.map(promoted, fn {name, arity} ->
+        ["  ", Atom.to_string(name), "/", Integer.to_string(arity), "\n"]
+      end)
+
+    ["\n# promoted to public in ", module, note, entries]
+  end
+
+  # use/import/require are never copied to the target (the tool can't
+  # know without macro expansion whether the closure needs them). Surface
+  # them so the AI can decide what to add back if compile complains.
+  defp extract_dropped_block([]), do: []
+
+  defp extract_dropped_block(dropped) do
+    entries =
+      dropped
+      |> Enum.sort_by(& &1.line)
+      |> Enum.map(fn d -> ["  source:", Integer.to_string(d.line), "  ", d.text, "\n"] end)
+
+    [
+      "\n# dropped directives (use / import / require)\n",
+      "# add back to the new target module if the build needs them.\n",
+      entries
+    ]
   end
 
   # --- rename ------------------------------------------------------------

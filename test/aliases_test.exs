@@ -191,7 +191,7 @@ defmodule Adze.AliasesTest do
 
       sample = Enum.find(mods, &(&1["name"] == "Sample"))
       assert sample
-      assert length(sample["directives"]) > 0
+      assert sample["directives"] != []
     end
   end
 

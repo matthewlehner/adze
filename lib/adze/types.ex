@@ -92,26 +92,24 @@ defmodule Adze.Types do
   def references_local?(_ast, type_index) when map_size(type_index) == 0, do: false
 
   def references_local?(ast, type_index) do
-    try do
-      Macro.prewalk(ast, fn
-        # already-qualified — never a local ref
-        {{:., _, [{:__aliases__, _, _}, _]}, _, _} = node ->
-          node
+    Macro.prewalk(ast, fn
+      # already-qualified — never a local ref
+      {{:., _, [{:__aliases__, _, _}, _]}, _, _} = node ->
+        node
 
-        {name, _, args} = node when is_atom(name) and is_list(args) ->
-          if Map.has_key?(type_index, {name, length(args)}), do: throw(:found), else: node
+      {name, _, args} = node when is_atom(name) and is_list(args) ->
+        if Map.has_key?(type_index, {name, length(args)}), do: throw(:found), else: node
 
-        {name, _, ctx} = node when is_atom(name) and (is_atom(ctx) or is_nil(ctx)) ->
-          if Map.has_key?(type_index, {name, 0}), do: throw(:found), else: node
+      {name, _, ctx} = node when is_atom(name) and (is_atom(ctx) or is_nil(ctx)) ->
+        if Map.has_key?(type_index, {name, 0}), do: throw(:found), else: node
 
-        other ->
-          other
-      end)
+      other ->
+        other
+    end)
 
-      false
-    catch
-      :found -> true
-    end
+    false
+  catch
+    :found -> true
   end
 
   @doc """

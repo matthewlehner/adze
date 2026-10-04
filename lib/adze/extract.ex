@@ -121,10 +121,11 @@ defmodule Adze.Extract do
   alias Adze.AST
   alias Adze.Definition
   alias Adze.Deps
+  alias Adze.Extract.{Callers, Promote, Render, Source, Target}
   alias Adze.LsDeps
   alias Adze.ProjectRewrite
   alias Adze.Types
-  alias Adze.Extract.{Callers, Promote, Render, Source, Target}
+  alias Mix.Tasks.Format
 
   # This module resolves the definition and its closure and runs the
   # checks; the work is split across:
@@ -219,33 +220,29 @@ defmodule Adze.Extract do
 
       try do
         target_content =
-          Target.build_target_file(
-            target_module,
-            kept_directives,
-            source,
-            closure_defs,
-            type_index,
-            source_module,
-            source_remaining_keys,
-            promoted_keys,
-            formatter_opts
-          )
+          Target.build_target_file(source, closure_defs, %{
+            target_module: target_module,
+            source_module: source_module,
+            directives: kept_directives,
+            type_index: type_index,
+            source_remaining_keys: source_remaining_keys,
+            promoted_keys: promoted_keys,
+            formatter_opts: formatter_opts
+          })
 
         needs_alias? =
           Source.target_needs_alias_in_source?(source, def_key, source_module, closure_defs, opts)
 
         new_source =
-          Source.build_new_source(
-            source,
-            body_info,
-            closure_defs,
-            target_module,
-            needs_alias?,
-            all_defs,
-            source_module,
-            MapSet.new(promoted_in_source),
-            formatter_opts
-          )
+          Source.build_new_source(source, closure_defs, %{
+            target_module: target_module,
+            source_module: source_module,
+            body_info: body_info,
+            needs_alias?: needs_alias?,
+            all_defs: all_defs,
+            promote_keys: MapSet.new(promoted_in_source),
+            formatter_opts: formatter_opts
+          })
 
         # Keys whose call sites may need rewriting. Promoted defs are
         # public *now* (in the target) but had no cross-file callers
@@ -340,10 +337,9 @@ defmodule Adze.Extract do
   # parse error, …) is non-fatal — return `[]` and let the formatter
   # use its defaults.
   defp resolve_formatter_opts(path) do
-    if Code.ensure_loaded?(Mix.Tasks.Format) and
-         function_exported?(Mix.Tasks.Format, :formatter_for_file, 1) do
+    if Code.ensure_loaded?(Format) and function_exported?(Format, :formatter_for_file, 1) do
       try do
-        {_formatter, opts} = Mix.Tasks.Format.formatter_for_file(path)
+        {_formatter, opts} = Format.formatter_for_file(path)
         opts
       rescue
         _ -> []

@@ -174,7 +174,7 @@ defmodule Adze.Outline do
   # parts fall through to the source snippet.
   defp alias_name({:__aliases__, _, parts} = ast) when is_list(parts) do
     if Enum.all?(parts, &is_atom/1),
-      do: parts |> Enum.map(&Atom.to_string/1) |> Enum.join("."),
+      do: parts |> Enum.map_join(".", &Atom.to_string/1),
       else: snippet(ast)
   end
 

@@ -65,7 +65,7 @@ defmodule Adze.Extract.Promote do
     text
     |> String.split("\n")
     |> Enum.with_index()
-    |> Enum.map(fn {line, idx} ->
+    |> Enum.map_join("\n", fn {line, idx} ->
       if MapSet.member?(clause_offsets, idx) do
         Regex.replace(pattern, line, fn _, indent, kw, ws ->
           indent <> Atom.to_string(Map.fetch!(@promotions, String.to_atom(kw))) <> ws
@@ -74,7 +74,6 @@ defmodule Adze.Extract.Promote do
         line
       end
     end)
-    |> Enum.join("\n")
   end
 
   # `@doc false` marks the promoted def as public-for-structure, not

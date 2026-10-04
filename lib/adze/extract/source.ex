@@ -31,17 +31,16 @@ defmodule Adze.Extract.Source do
   #      node (`@moduledoc`, `use`, `import`, `alias`, `require`).
   #      Skipped when no caller survived (avoids `unused alias`
   #      warnings on public-API extractions).
-  def build_new_source(
-        source,
-        body_info,
-        closure_defs,
-        target_module,
-        needs_alias?,
-        all_defs,
-        source_module,
-        promote_keys,
-        formatter_opts
-      ) do
+  @spec build_new_source(String.t(), [Definition.t()], map()) :: String.t()
+  def build_new_source(source, closure_defs, %{
+        target_module: target_module,
+        source_module: source_module,
+        body_info: body_info,
+        needs_alias?: needs_alias?,
+        all_defs: all_defs,
+        promote_keys: promote_keys,
+        formatter_opts: formatter_opts
+      }) do
     lines = String.split(source, "\n")
     closure_keys = MapSet.new(closure_defs, &{&1.name, &1.arity})
 

@@ -41,6 +41,7 @@ defmodule Adze.ProjectRewrite do
   """
 
   alias Adze.AliasScope
+  alias Igniter.Refactors.Rename
 
   @enforce_keys [:igniter]
   defstruct [:igniter, :root, :keep_marker, test?: false]
@@ -80,21 +81,19 @@ defmodule Adze.ProjectRewrite do
   """
   @spec new(opts()) :: {:ok, t()} | {:error, term()}
   def new(opts \\ []) do
-    cond do
-      Keyword.has_key?(opts, :files) ->
-        {:ok, %__MODULE__{igniter: Igniter.Test.test_project(opts), test?: true}}
+    if Keyword.has_key?(opts, :files) do
+      {:ok, %__MODULE__{igniter: Igniter.Test.test_project(opts), test?: true}}
+    else
+      root = Keyword.get(opts, :mix_root, ".") |> Path.expand()
 
-      true ->
-        root = Keyword.get(opts, :mix_root, ".") |> Path.expand()
+      igniter =
+        in_dir(root, fn ->
+          Igniter.new()
+          |> Igniter.include_all_elixir_files()
+          |> include_extra_elixirc_paths()
+        end)
 
-        igniter =
-          in_dir(root, fn ->
-            Igniter.new()
-            |> Igniter.include_all_elixir_files()
-            |> include_extra_elixirc_paths()
-          end)
-
-        {:ok, %__MODULE__{igniter: igniter, root: root}}
+      {:ok, %__MODULE__{igniter: igniter, root: root}}
     end
   end
 
@@ -163,7 +162,7 @@ defmodule Adze.ProjectRewrite do
     igniter =
       in_dir(rewrite.root, fn ->
         rewrite.igniter
-        |> Igniter.Refactors.Rename.rename_module(old_module, new_module)
+        |> Rename.rename_module(old_module, new_module)
         |> schedule_test_file_move(new_module)
       end)
 
@@ -565,7 +564,7 @@ defmodule Adze.ProjectRewrite do
       in_dir(rewrite.root, fn ->
         rewrite.igniter
         |> clear_included_flag()
-        |> Igniter.Refactors.Rename.rename_function(
+        |> Rename.rename_function(
           {old_mod, old_fun},
           {new_mod, new_fun},
           opts

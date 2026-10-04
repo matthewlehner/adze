@@ -5,20 +5,29 @@ defmodule Adze.Extract.Target do
   # from AST when local types, `__MODULE__` or calls back into the source
   # module need qualifying.
 
-  alias Adze.Types
   alias Adze.Extract.{LocalCalls, Promote, Render}
+  alias Adze.Types
 
-  def build_target_file(
-        target_module,
-        directives,
-        source,
-        closure_defs,
-        type_index,
-        source_module,
-        source_remaining_keys,
-        promoted_keys,
-        formatter_opts
-      ) do
+  @type ctx :: %{
+          target_module: String.t(),
+          source_module: String.t(),
+          directives: [Macro.t()],
+          type_index: Types.type_index(),
+          source_remaining_keys: MapSet.t(),
+          promoted_keys: MapSet.t(),
+          formatter_opts: keyword()
+        }
+
+  @spec build_target_file(String.t(), [Adze.Definition.t()], ctx()) :: String.t()
+  def build_target_file(source, closure_defs, %{
+        target_module: target_module,
+        source_module: source_module,
+        directives: directives,
+        type_index: type_index,
+        source_remaining_keys: source_remaining_keys,
+        promoted_keys: promoted_keys,
+        formatter_opts: formatter_opts
+      }) do
     source_lines = String.split(source, "\n")
 
     directive_blocks =
@@ -101,7 +110,7 @@ defmodule Adze.Extract.Target do
       end)
 
     if any_changed? do
-      {:changed, new_nodes |> Enum.map(&Render.render_node/1) |> Enum.join("\n")}
+      {:changed, Enum.map_join(new_nodes, "\n", &Render.render_node/1)}
     else
       :unchanged
     end
@@ -144,7 +153,7 @@ defmodule Adze.Extract.Target do
     source_parts = source_module |> String.split(".") |> Enum.map(&String.to_atom/1)
 
     definition.nodes
-    |> Enum.map(fn
+    |> Enum.map_join("\n", fn
       {:@, _, [{kind, _, _}]} = node when kind in [:spec, :callback, :macrocallback] ->
         node
         |> Types.qualify(type_index, source_module)
@@ -158,7 +167,6 @@ defmodule Adze.Extract.Target do
         |> elem(0)
         |> Render.render_node()
     end)
-    |> Enum.join("\n")
   end
 
   defp rewrite_module_macro(node, source_module) do

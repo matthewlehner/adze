@@ -384,13 +384,12 @@ defmodule Adze.ExtractPrivate do
     source
     |> String.split("\n")
     |> Enum.with_index(1)
-    |> Enum.map(fn {line, lineno} ->
+    |> Enum.map_join("\n", fn {line, lineno} ->
       if MapSet.member?(clause_lines, lineno) do
         String.replace(line, pattern, "\\1#{to_str}\\2")
       else
         line
       end
     end)
-    |> Enum.join("\n")
   end
 end
