@@ -40,9 +40,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - `mix adze.install` always installs both skills (`.claude/skills/` and
   `.agents/skills/`); the `--claude` / `--codex` flags are gone (passing
-  them is harmless). It now writes its instructions only to `AGENTS.md`
-  and leaves `CLAUDE.md` alone. Claude Code reads `AGENTS.md` only when
-  the project has no `CLAUDE.md`; otherwise add `@AGENTS.md` to it.
+  them is harmless). It now writes its instructions to `AGENTS.md`. Since
+  Claude Code ignores `AGENTS.md` when a `CLAUDE.md` exists, an existing
+  `CLAUDE.md` (or `.claude/CLAUDE.md`) gets an `@AGENTS.md` import instead,
+  and the adze section 0.1.0 wrote into it is removed. It never creates a
+  `CLAUDE.md` or edits `CLAUDE.local.md`.
 
 ### Known limitations
 

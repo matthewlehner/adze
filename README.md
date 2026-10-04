@@ -34,11 +34,16 @@ for `mix adze` instead of hand-editing:
 Both skills are always installed, since Claude Code only loads skills from
 `.claude/skills/` and the other agents from `.agents/skills/`.
 
-It also adds an adze section to `AGENTS.md` (creating it if needed), and
-leaves `CLAUDE.md` alone. Codex, Pi and OpenCode read `AGENTS.md`. Claude Code
-(v2.1.277+) reads it too, but only when the project has no `CLAUDE.md`,
-`.claude/CLAUDE.md` or `CLAUDE.local.md`. If yours does, add an `@AGENTS.md`
-line to it so Claude picks up the adze section.
+It also adds an adze section to `AGENTS.md` (creating it if needed). Codex, Pi
+and OpenCode read `AGENTS.md`. Claude Code (v2.1.277+) reads it too, but only
+when the project has no `CLAUDE.md`, `.claude/CLAUDE.md` or `CLAUDE.local.md`.
+So if your project has a `CLAUDE.md`, the installer appends an `@AGENTS.md`
+import to it (and removes the adze section older versions wrote there). It
+never creates a `CLAUDE.md` and never edits `CLAUDE.local.md`; if that's your
+only one, add the `@AGENTS.md` line yourself.
+
+Re-run `mix igniter.install adze` after upgrading adze to refresh the skills
+and the `AGENTS.md` section.
 
 ### Manual install
 
