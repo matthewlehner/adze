@@ -183,6 +183,14 @@ defmodule Adze.Definition do
 
   def callable_arities(%__MODULE__{arity: arity}), do: [arity]
 
+  @doc "`{name, arity}` for every arity each definition can be called with."
+  @spec callable_keys([t()]) :: MapSet.t({atom(), non_neg_integer()})
+  def callable_keys(defs) do
+    defs
+    |> Enum.flat_map(fn d -> Enum.map(callable_arities(d), &{d.name, &1}) end)
+    |> MapSet.new()
+  end
+
   defp count_defaults({_kind, _, [head | _]}),
     do: head |> head_args() |> Enum.count(&default_arg?/1)
 

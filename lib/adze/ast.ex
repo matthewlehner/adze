@@ -34,6 +34,43 @@ defmodule Adze.AST do
   def unwrap_atom(a) when is_atom(a), do: a
   def unwrap_atom(_), do: nil
 
+  @doc """
+  The names an `alias` directive binds, given its arguments:
+  `alias Foo.Bar` → `[:Bar]`, `alias Foo.Bar, as: Baz` → `[:Baz]`,
+  `alias Foo.{Bar, Baz}` → `[:Bar, :Baz]`. `[]` for anything else.
+  """
+  @spec alias_bindings([Macro.t()]) :: [atom()]
+  def alias_bindings([{:__aliases__, _, parts} | rest]) do
+    case alias_as(rest) do
+      {:__aliases__, _, [as_atom]} -> [as_atom]
+      _ -> [List.last(parts)]
+    end
+  end
+
+  def alias_bindings([{{:., _, [{:__aliases__, _, _prefix}, :{}]}, _, members}]) do
+    Enum.flat_map(members, fn
+      {:__aliases__, _, parts} -> [List.last(parts)]
+      _ -> []
+    end)
+  end
+
+  def alias_bindings(_), do: []
+
+  @doc """
+  The `as:` value in an `alias` directive's trailing options, or nil.
+  Sourceror wraps keyword keys in `{:__block__, _, [:key]}`, so this
+  unwraps each key rather than using `Keyword.get/2`.
+  """
+  @spec alias_as([Macro.t()]) :: Macro.t() | nil
+  def alias_as([opts]) when is_list(opts) do
+    Enum.find_value(opts, fn
+      {key, value} -> if unwrap_atom(key) == :as, do: value
+      _ -> nil
+    end)
+  end
+
+  def alias_as(_), do: nil
+
   @doc "The expressions in a `do` body: a block's children, `[]` for nil, else `[body]`."
   @spec body_exprs(Macro.t()) :: [Macro.t()]
   def body_exprs({:__block__, _, exprs}) when is_list(exprs), do: exprs
