@@ -23,6 +23,14 @@ defmodule Adze.InstallTest do
     |> assert_creates(".agents/skills/adze/SKILL.md", @skill)
   end
 
+  test "a plain install says installed and shows the quick test" do
+    igniter = test_project() |> install([])
+
+    assert [notice] = igniter.notices
+    assert notice =~ "Adze installed."
+    assert notice =~ "Quick test"
+  end
+
   # Claude Code only loads skills from `.claude/skills/` and Codex/Pi/OpenCode
   # from `.agents/skills/`, so both are always installed; there are no
   # per-platform flags. Igniter ignores unknown switches, so the old

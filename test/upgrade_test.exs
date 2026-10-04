@@ -38,6 +38,16 @@ defmodule Adze.UpgradeTest do
     assert content(igniter, "AGENTS.md") =~ "# Agents\n"
   end
 
+  test "says the files were updated, not installed" do
+    igniter = test_project() |> upgrade("0.1.0", "0.2.0")
+
+    assert [notice] = igniter.notices
+    assert notice =~ "Adze updated."
+    assert notice =~ "Skill: .claude/skills/adze/SKILL.md"
+    refute notice =~ "Adze installed."
+    refute notice =~ "Quick test"
+  end
+
   test "adze's own refreshed files don't trigger the removed-command warning" do
     igniter =
       test_project(

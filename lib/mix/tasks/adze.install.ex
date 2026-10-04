@@ -214,15 +214,29 @@ defmodule Mix.Tasks.Adze.Install do
         ["Agent instructions: #{@agents_md}"] ++
         claude_md_line(claude_md)
 
-    Igniter.add_notice(igniter, """
-    Adze installed.
+    file_list = Enum.map_join(files, "\n", &"  • #{&1}")
 
-    #{Enum.map_join(files, "\n", &"  • #{&1}")}
+    # `adze.upgrade` sets this assign before composing the installer.
+    notice =
+      if igniter.assigns[:adze_upgrade?] do
+        """
+        Adze updated.
 
-    ## Quick test
+        #{file_list}
+        """
+      else
+        """
+        Adze installed.
 
-        mix adze ls --file lib/your_app.ex
-    """)
+        #{file_list}
+
+        ## Quick test
+
+            mix adze ls --file lib/your_app.ex
+        """
+      end
+
+    Igniter.add_notice(igniter, notice)
   end
 
   defp claude_md_line({:imported, path, import}),

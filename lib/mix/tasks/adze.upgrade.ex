@@ -34,6 +34,7 @@ defmodule Mix.Tasks.Adze.Upgrade do
     }
 
     igniter
+    |> Igniter.assign(:adze_upgrade?, true)
     |> Igniter.compose_task("adze.install", [])
     |> Igniter.Upgrades.run(from, to, upgrades, custom_opts: igniter.args.options)
   end
