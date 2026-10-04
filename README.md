@@ -26,12 +26,16 @@ mix igniter.install adze
 This adds the dependency *and* sets up skill files so your agent knows to reach
 for `mix adze` instead of hand-editing:
 
-| Platform | Skill path | Config patched |
-|----------|-----------|----------------|
-| Claude Code | `.claude/skills/adze/SKILL.md` | `CLAUDE.md` |
-| Codex / Pi / OpenCode | `.agents/skills/adze/SKILL.md` | `AGENTS.md` |
+| Platform | Skill path |
+|----------|-----------|
+| Claude Code | `.claude/skills/adze/SKILL.md` |
+| Codex / Pi / OpenCode | `.agents/skills/adze/SKILL.md` |
 
-Target a single platform with `--claude` or `--codex`.
+It also adds an adze section to `AGENTS.md` (creating it if needed). Every
+supported agent, Claude Code included, reads `AGENTS.md`, so that's the only
+agent file adze touches; `CLAUDE.md` is left alone.
+
+Install a single platform's skill with `--claude` or `--codex`.
 
 ### Manual install
 
@@ -72,8 +76,8 @@ cp deps/adze/skill.md .agents/skills/adze/SKILL.md
 
 Then append the contents of
 [`agents-snippet.md`](agents-snippet.md) (also at
-`deps/adze/agents-snippet.md`) to your `CLAUDE.md` or `AGENTS.md`, creating
-it if it doesn't exist:
+`deps/adze/agents-snippet.md`) to your `AGENTS.md`, creating it if it
+doesn't exist:
 
 ```bash
 cat deps/adze/agents-snippet.md >> AGENTS.md

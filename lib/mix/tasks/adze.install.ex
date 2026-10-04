@@ -14,14 +14,16 @@ defmodule Mix.Tasks.Adze.Install.Docs do
     ## What it does
 
     1. Creates a skill file in the appropriate location for your agent platform
-    2. Patches your `CLAUDE.md` or `AGENTS.md` to reference the skill
+    2. Adds an adze section to `AGENTS.md` (creating it if needed). Every
+       supported agent, Claude Code included, reads `AGENTS.md`, so it's the
+       only agent file adze touches; `CLAUDE.md` is left alone.
 
     ## Options
 
-    * `--claude` — Install for Claude Code (`.claude/skills/adze/SKILL.md` + `CLAUDE.md`)
-    * `--codex` — Install for Codex/Pi/OpenCode (`.agents/skills/adze/SKILL.md` + `AGENTS.md`)
+    * `--claude` — Install the Claude Code skill (`.claude/skills/adze/SKILL.md`)
+    * `--codex` — Install the Codex/Pi/OpenCode skill (`.agents/skills/adze/SKILL.md`)
 
-    If neither flag is passed, both are installed.
+    If neither flag is passed, both skills are installed.
 
     ## Example
 
@@ -50,7 +52,6 @@ if Code.ensure_loaded?(Igniter) do
 
     @claude_skill_path ".claude/skills/adze/SKILL.md"
     @codex_skill_path ".agents/skills/adze/SKILL.md"
-    @claude_md "CLAUDE.md"
     @agents_md "AGENTS.md"
 
     @snippet_path Path.expand("../../../agents-snippet.md", __DIR__)
@@ -86,29 +87,26 @@ if Code.ensure_loaded?(Igniter) do
       igniter
       |> maybe_install_claude(claude?)
       |> maybe_install_codex(codex?)
+      |> patch_agents_md()
       |> add_completion_notice(claude?, codex?)
     end
 
     defp maybe_install_claude(igniter, false), do: igniter
 
     defp maybe_install_claude(igniter, true) do
-      igniter
-      |> Igniter.create_new_file(@claude_skill_path, @skill_content, on_exists: :skip)
-      |> patch_agent_file(@claude_md)
+      Igniter.create_new_file(igniter, @claude_skill_path, @skill_content, on_exists: :skip)
     end
 
     defp maybe_install_codex(igniter, false), do: igniter
 
     defp maybe_install_codex(igniter, true) do
-      igniter
-      |> Igniter.create_new_file(@codex_skill_path, @skill_content, on_exists: :skip)
-      |> patch_agent_file(@agents_md)
+      Igniter.create_new_file(igniter, @codex_skill_path, @skill_content, on_exists: :skip)
     end
 
-    defp patch_agent_file(igniter, path) do
-      if Igniter.exists?(igniter, path) do
+    defp patch_agents_md(igniter) do
+      if Igniter.exists?(igniter, @agents_md) do
         igniter
-        |> Igniter.update_file(path, fn source ->
+        |> Igniter.update_file(@agents_md, fn source ->
           current = Rewrite.Source.get(source, :content)
 
           if String.contains?(current, "mix adze") do
@@ -120,10 +118,20 @@ if Code.ensure_loaded?(Igniter) do
         end)
       else
         # Create the file with just the adze section
-        Igniter.create_new_file(igniter, path, String.trim_leading(@skill_reference),
+        Igniter.create_new_file(igniter, @agents_md, String.trim_leading(@skill_reference),
           on_exists: :skip
         )
       end
+    end
+
+    defp installed_files(claude?, codex?) do
+      [
+        claude? && "Skill: #{@claude_skill_path}",
+        codex? && "Skill: #{@codex_skill_path}",
+        "Agent instructions: #{@agents_md}"
+      ]
+      |> Enum.filter(& &1)
+      |> Enum.map_join("\n", &"  • #{&1}")
     end
 
     defp add_completion_notice(igniter, claude?, codex?) do
@@ -137,8 +145,7 @@ if Code.ensure_loaded?(Igniter) do
       Igniter.add_notice(igniter, """
       Adze installed for: #{platforms}
 
-      #{if claude?, do: "  • Skill: #{@claude_skill_path}", else: ""}
-      #{if codex?, do: "  • Skill: #{@codex_skill_path}", else: ""}
+      #{installed_files(claude?, codex?)}
 
       ## usage_rules integration (optional)
 
