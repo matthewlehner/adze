@@ -345,6 +345,14 @@ defmodule AdzeExtractTest do
 
       assert result.target_path == Path.join(tmp, "lib/my_app/foo.ex")
     end
+
+    test "without mix_root, the derived path is relative with no ./ prefix" do
+      source = "defmodule S do\n  def f, do: :ok\nend\n"
+
+      {:ok, result} = Extract.extract(source, definition: "f/0", module: "MyApp.NoSuchModule")
+
+      assert result.target_path == "lib/my_app/no_such_module.ex"
+    end
   end
 
   describe "extract/2 — alias insertion in source" do

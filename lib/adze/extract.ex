@@ -485,9 +485,12 @@ defmodule Adze.Extract do
         {:ok, path}
 
       nil ->
-        root = Keyword.get(opts, :mix_root, ".")
         rel = Path.join("lib", Macro.underscore(target_module) <> ".ex")
-        {:ok, Path.join(root, rel)}
+
+        case Keyword.get(opts, :mix_root) do
+          nil -> {:ok, rel}
+          root -> {:ok, Path.join(root, rel)}
+        end
     end
   end
 
