@@ -64,8 +64,12 @@ import to it (and removes the adze section older versions wrote there). It
 never creates a `CLAUDE.md` and never edits `CLAUDE.local.md`; if that's your
 only one, add the `@AGENTS.md` line yourself.
 
-Re-run `mix igniter.install adze` after upgrading adze to refresh the skills
-and the `AGENTS.md` section.
+To upgrade, use `mix igniter.upgrade adze` instead of `mix deps.update adze`.
+It updates the dependency and refreshes the skills and the `AGENTS.md`
+section. When a release changes how adze is used, it also lists anything in
+your own files (scripts, CI, your own agent notes) that needs updating. If you
+upgraded with `mix deps.update`, or use adze as a path dependency, run
+`mix igniter.install adze` afterwards to refresh the files.
 
 ### Option 2: Manual
 
@@ -108,6 +112,9 @@ doesn't exist:
 ```bash
 cat deps/adze/agents-snippet.md >> AGENTS.md
 ```
+
+After upgrading adze, copy `skill.md` again and replace the adze section in
+`AGENTS.md`. Or switch to Option 1, which does both for you.
 
 ## When to Reach for Adze
 

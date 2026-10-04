@@ -22,8 +22,9 @@ defmodule Mix.Tasks.Adze.Install.Docs do
        `CLAUDE.md` exists. Also removes the adze section older versions
        wrote there. `CLAUDE.local.md` is never edited.
 
-    Re-run it after upgrading adze to refresh the skills and the
-    `AGENTS.md` section.
+    Upgrading with `mix igniter.upgrade adze` re-runs it for you (via
+    `mix adze.upgrade`). After a plain `mix deps.update adze`, re-run it
+    to refresh the skills and the `AGENTS.md` section.
 
     ## Example
 

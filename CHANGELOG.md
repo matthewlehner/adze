@@ -7,6 +7,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Upgrading to 0.2.0
+
+Upgrade with `mix igniter.upgrade adze` instead of `mix deps.update adze`.
+It runs the new `adze.upgrade` task, which:
+
+- refreshes the adze skill files and the adze section of `AGENTS.md`,
+  which still tell agents to use the removed `!` commands;
+- lists every `mix adze mv!` / `extract!` / `rename!` / `extract-private!`
+  left in your own files (Makefiles, scripts, CI workflows, your own agent
+  notes) with its file and line. It doesn't rewrite them. Drop the `!`, and
+  add `--dry-run` where a script relied on the old preview-only default.
+
+If you upgraded with `mix deps.update`, or use adze as a path dependency
+(`igniter.upgrade` can't read the old version), run
+`mix igniter.install adze` to refresh the files, then search for `adze \w+!`
+yourself.
+
+### Added
+
+- `mix adze.upgrade`, run by `mix igniter.upgrade adze`. Every upgrade
+  re-runs the installer; version-specific steps flag anything else that
+  needs changing.
+
 ### Fixed
 
 - `ls`: a multi-line `alias Foo.{Bar, Baz}` renders on one line listing
