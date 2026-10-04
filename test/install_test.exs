@@ -73,4 +73,78 @@ defmodule Adze.InstallTest do
       assert length(String.split(agents, "## adze — structural Elixir refactoring")) == 2
     end
   end
+
+  # The skills and the AGENTS.md section belong to adze. Re-running the
+  # installer after upgrading adze must bring them up to date, or agents keep
+  # following the old version's commands and flags.
+  describe "re-running after an upgrade" do
+    @stale_skill "---\nname: adze\n---\n\n# adze (old version)\n"
+
+    test "replaces stale skill files with the packaged skill.md" do
+      test_project(
+        files: %{
+          ".claude/skills/adze/SKILL.md" => @stale_skill,
+          ".agents/skills/adze/SKILL.md" => @stale_skill
+        }
+      )
+      |> install([])
+      |> then(fn igniter ->
+        assert content(igniter, ".claude/skills/adze/SKILL.md") == @skill
+        assert content(igniter, ".agents/skills/adze/SKILL.md") == @skill
+      end)
+    end
+
+    test "leaves up-to-date skill files and AGENTS.md section untouched" do
+      test_project()
+      |> install([])
+      |> apply_igniter!()
+      |> install([])
+      |> assert_unchanged([
+        ".claude/skills/adze/SKILL.md",
+        ".agents/skills/adze/SKILL.md",
+        "AGENTS.md"
+      ])
+    end
+
+    test "replaces an old adze section in AGENTS.md, keeping the rest" do
+      agents_md = """
+      # Agents
+
+      Intro.
+
+      ## adze — structural Elixir refactoring
+
+      Old instructions with `mix adze ls --file PATH` and a removed flag.
+
+      ## Testing
+
+      Run mix test.
+      """
+
+      igniter = test_project(files: %{"AGENTS.md" => agents_md}) |> install([])
+      agents = content(igniter, "AGENTS.md")
+
+      assert agents =~ String.trim(@snippet)
+      refute agents =~ "Old instructions"
+      assert agents =~ ~r/\A# Agents\n\nIntro\.\n\n## adze/
+      assert agents =~ ~r/\n\n## Testing\n\nRun mix test\.\n\z/
+    end
+
+    test "replaces an old adze section at the end of AGENTS.md" do
+      agents_md = "# Agents\n\n## adze — old heading text\n\nOld `mix adze` notes.\n"
+
+      igniter = test_project(files: %{"AGENTS.md" => agents_md}) |> install([])
+      agents = content(igniter, "AGENTS.md")
+
+      assert agents == "# Agents\n\n" <> String.trim(@snippet) <> "\n"
+    end
+
+    test "leaves user-written adze notes without an adze heading alone" do
+      agents_md = "# Agents\n\nWe use `mix adze ls` before reading big files.\n"
+
+      test_project(files: %{"AGENTS.md" => agents_md})
+      |> install([])
+      |> assert_unchanged("AGENTS.md")
+    end
+  end
 end

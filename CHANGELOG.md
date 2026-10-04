@@ -30,6 +30,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `mix adze.install` reads `skill.md` from the adze package (embedded at
   compile time), so it works in umbrella apps and with a custom
   `deps_path`.
+- Re-running `mix adze.install` after upgrading adze now refreshes the adze
+  section in `AGENTS.md` (found by its `## adze` heading) instead of
+  keeping the old one. The skill files are always overwritten.
 - Concurrent rewrites against different `mix_root`s no longer race on the
   (VM-global) working directory.
 

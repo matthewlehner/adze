@@ -47,7 +47,7 @@ defmodule Mix.Tasks.Adze.Install do
 
   @snippet_path Path.expand("../../../agents-snippet.md", __DIR__)
   @external_resource @snippet_path
-  @skill_reference "\n" <> File.read!(@snippet_path)
+  @agents_section @snippet_path |> File.read!() |> String.trim()
 
   @impl Igniter.Mix.Task
   def info(_argv, _composing_task) do
@@ -62,31 +62,47 @@ defmodule Mix.Tasks.Adze.Install do
   @impl Igniter.Mix.Task
   def igniter(igniter) do
     @skill_paths
-    |> Enum.reduce(igniter, fn path, ig ->
-      Igniter.create_new_file(ig, path, @skill_content, on_exists: :skip)
-    end)
+    |> Enum.reduce(igniter, &install_skill(&2, &1))
     |> patch_agents_md()
     |> add_completion_notice()
   end
 
-  defp patch_agents_md(igniter) do
-    if Igniter.exists?(igniter, @agents_md) do
-      igniter
-      |> Igniter.update_file(@agents_md, fn source ->
-        current = Rewrite.Source.get(source, :content)
+  # The skill files belong to adze: overwrite them so re-running the
+  # installer after an upgrade brings them up to date.
+  defp install_skill(igniter, path) do
+    Igniter.create_or_update_file(igniter, path, @skill_content, fn source ->
+      Rewrite.Source.update(source, :content, @skill_content)
+    end)
+  end
 
-        if String.contains?(current, "mix adze") do
-          # Already has adze references, don't double-add
-          source
-        else
-          Rewrite.Source.update(source, :content, current <> @skill_reference)
-        end
-      end)
-    else
-      # Create the file with just the adze section
-      Igniter.create_new_file(igniter, @agents_md, String.trim_leading(@skill_reference),
-        on_exists: :skip
-      )
+  defp patch_agents_md(igniter) do
+    Igniter.create_or_update_file(igniter, @agents_md, @agents_section <> "\n", fn source ->
+      current = Rewrite.Source.get(source, :content)
+
+      case put_adze_section(current, @agents_section) do
+        ^current -> source
+        updated -> Rewrite.Source.update(source, :content, updated)
+      end
+    end)
+  end
+
+  # The adze section starts at its `## adze` heading and runs to the next
+  # `#` / `##` heading or the end of the file. Replace it when present (so
+  # upgrades refresh it); append it when the file has no adze mention at
+  # all; leave user-written adze notes without that heading alone.
+  @section_re ~r/^## adze\b.*?(?=^\#{1,2} |\z)/ms
+
+  defp put_adze_section(content, section) do
+    case Regex.run(@section_re, content, return: :index) do
+      [{start, len}] ->
+        before = binary_part(content, 0, start)
+        rest = binary_part(content, start + len, byte_size(content) - start - len)
+        before <> section <> if(rest == "", do: "\n", else: "\n\n") <> rest
+
+      nil ->
+        if String.contains?(content, "mix adze"),
+          do: content,
+          else: String.trim_trailing(content) <> "\n\n" <> section <> "\n"
     end
   end
 
