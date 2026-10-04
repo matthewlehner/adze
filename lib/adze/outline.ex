@@ -178,6 +178,11 @@ defmodule Adze.Outline do
       else: snippet(ast)
   end
 
+  # `alias Foo.{Bar, Baz}` — render on one line, every member, no truncation.
+  defp alias_name({{:., _, [base, :{}]}, _, members}) when is_list(members) do
+    alias_name(base) <> ".{" <> Enum.map_join(members, ", ", &alias_name/1) <> "}"
+  end
+
   defp alias_name(atom) when is_atom(atom), do: inspect(atom)
   defp alias_name(other), do: snippet(other)
 
@@ -227,7 +232,8 @@ defmodule Adze.Outline do
   defp attribute_target(_, _), do: nil
 
   defp snippet(ast) do
-    ast |> Macro.to_string() |> String.slice(0, 60)
+    # One line: a multi-line snippet breaks the one-entry-per-line outline.
+    ast |> Macro.to_string() |> String.replace(~r/\s*\n\s*/, " ") |> String.slice(0, 60)
   rescue
     _ -> "<unprintable>"
   end

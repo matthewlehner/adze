@@ -171,6 +171,25 @@ defmodule AdzeTest do
     end
   end
 
+  describe "ls text rendering of multi-line directives" do
+    test "a multi-line brace alias renders on one line with every member" do
+      source = """
+      defmodule X do
+        alias Foo.{
+          Bar,
+          Baz.Qux
+        }
+      end
+      """
+
+      {:ok, outline} = Outline.outline(source)
+      text = Adze.Formatter.format(outline, :text)
+
+      assert text =~ ~r/^  alias Foo\.\{Bar, Baz\.Qux\}   L2–5$/m
+      refute text =~ ~r/^\s*Bar,$/m
+    end
+  end
+
   describe "ls text rendering of multi-clause functions" do
     setup do
       source = """

@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `ls`: a multi-line `alias Foo.{Bar, Baz}` renders on one line listing
+  every member, instead of spilling raw source across several lines.
 - `extract`: cross-file pipes whose real arity stays in the source are no
   longer rewritten.
 - `extract`: refuses (instead of emitting uncompilable code) when the
