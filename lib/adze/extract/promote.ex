@@ -90,12 +90,16 @@ defmodule Adze.Extract.Promote do
           _ -> ""
         end
 
-      # Insert below any leading comment lines so the comment stays
-      # attached to the `@doc` / def it describes.
+      # Insert directly above the def, below any leading comment lines
+      # (and the blank lines that set a detached comment apart), so a
+      # comment stays attached to the `@doc` / def it describes.
       {comments, rest} =
         text
         |> String.split("\n")
-        |> Enum.split_while(&String.starts_with?(String.trim_leading(&1), "#"))
+        |> Enum.split_while(fn line ->
+          trimmed = String.trim_leading(line)
+          trimmed == "" or String.starts_with?(trimmed, "#")
+        end)
 
       Enum.join(comments ++ [indent <> "@doc false" | rest], "\n")
     end

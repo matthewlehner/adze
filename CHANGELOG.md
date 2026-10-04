@@ -20,6 +20,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `extract`: files that already contained the text `__adze_keep__` (a
   string, a comment) are no longer silently edited by the pipe-protection
   pass.
+- `extract`: `@doc false` on a promoted def goes directly above the def,
+  not under a detached comment with a blank line in between.
 - `find-callers`: `__MODULE__.Inner.f()` resolves against the enclosing
   module even when an alias shadows its first segment, and no longer
   creates atoms from module labels.

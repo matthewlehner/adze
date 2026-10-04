@@ -669,6 +669,27 @@ defmodule AdzeExtractTest do
       assert apply(MultiClause, :run, [nil]) == :none
     end
 
+    test "@doc false sits directly above the promoted def, below a detached comment" do
+      source = """
+      defmodule Detached do
+        def run(x), do: helper(x)
+
+        # --- helpers ---
+
+        defp helper(x), do: x
+      end
+      """
+
+      {:ok, result} =
+        Extract.extract(source,
+          definition: "helper/1",
+          module: "Detached.Helper",
+          path: "/tmp/__nonexistent__.ex"
+        )
+
+      assert result.target_content =~ "# --- helpers ---\n\n  @doc false\n  def helper(x)"
+    end
+
     test "promotes defmacrop → defmacro" do
       source = """
       defmodule MacroSource do
