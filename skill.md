@@ -48,7 +48,7 @@ Returns every top-level definition with line ranges. Legend:
 - `m macro_name/1   L75–90` — `defmacro` (suffix `[private]` for `defmacrop`)
 - `g guard_name/1   L95` — `defguard` (suffix `[private]` for `defguardp`)
 - `d delegated/2   L100` — `defdelegate`
-- `@spec :foo   L40` — type spec
+- `@spec foo   L40` — type spec for `foo`
 - `alias Module   L5` — directive
 
 Then use your file-read tool on just the line range you need instead of

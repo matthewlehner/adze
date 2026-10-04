@@ -2,8 +2,8 @@ defmodule Adze.ProjectRewrite do
   @moduledoc """
   Thin wrapper around Igniter for project-wide write ops.
 
-  All cross-file write ops in adze — `rename`, `extract!`'s caller
-  rewriting (Session 6.5), `find-callers` (Session 7) — funnel through
+  All project-wide ops in adze — `rename`, `extract!`'s caller
+  rewriting, and the read-only `find-callers` — funnel through
   this module so the Igniter-shaped plumbing (build the rewrite, run
   the op, extract per-file diffs, write changes) lives in exactly one
   place.

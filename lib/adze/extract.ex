@@ -57,10 +57,14 @@ defmodule Adze.Extract do
           directive comes back in `dropped_directives` as
           `%{kind:, line:, text:}` so the AI driver can decide which
           (if any) to add back to the target.
-    * **Cross-file caller updating** is out of scope for this session.
-      External callers of the moved public def will need updating — the
-      next compile run surfaces them. `find-callers` (Session 7) will
-      make this proactive.
+    * **Callers across the project are rewritten.** Qualified calls,
+      pipes and captures of each moved public def (resolved through
+      aliases) are retargeted from `Source.fun` to `Target.fun` at every
+      arity the def is callable at, including default-argument
+      arities. The edits come back in `caller_diffs`. Calls adze can't
+      retarget — bare calls through `import Source` (refused, see
+      below) and dynamic `apply/3` — are left for the compiler to
+      surface.
     * **Private targets are promoted.** Extracting a `defp` (or
       `defmacrop` / `defguardp`) target moves it across a module
       boundary, so it *must* become public for its surviving callers

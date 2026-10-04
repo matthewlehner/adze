@@ -7,8 +7,8 @@ defmodule Adze.Definition do
   allowlisted attributes (`@doc`, `@spec`, `@typedoc`, `@impl`,
   `@deprecated`, `@since`) and any leading comments those nodes carry.
 
-  Used by write ops (`mv`, `extract`, `topo`) — the unit of mechanical
-  edit is always the whole group, never a bare `def`.
+  Used by write ops (`mv`, `extract`, `extract-private`) — the unit of
+  mechanical edit is always the whole group, never a bare `def`.
 
   ## Grouping rules
 
@@ -65,7 +65,7 @@ defmodule Adze.Definition do
   This is the recommended path when consuming adze as a project dep
   (`mix adze ...`): set the allowlist once based on what your project
   uses, and every `Adze.Definition` call — including those made by
-  future `mv` / `extract` / `topo` write ops — picks it up.
+  the `mv` / `extract` / `extract-private` write ops — picks it up.
 
   Both sources are merged with the built-in allowlist (`@doc`, `@spec`,
   `@typedoc`, `@impl`, `@deprecated`, `@since`). Per-call `include_attrs`

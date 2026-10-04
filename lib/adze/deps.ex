@@ -102,15 +102,11 @@ defmodule Adze.Deps do
   # defined: %{{name, arity} => {name, canonical_arity}}
   #
   # Default-arg synthetic arities collapse to the canonical (highest)
-  # arity. `def foo(a, b \\ 1)` registers `foo/1` and `foo/2` as
-  # separate graph nodes (so users can query either), but a call at
-  # either arity resolves to `foo/2` — the actual implementation. The
-  # earlier fate-sharing model recorded edges to every synthetic arity
-  # and produced phantom self-loops on recursive default-arg defs (a
-  # body calling `foo(...)` would record edges to both `foo/1` and
-  # `foo/2`, doubling the recursive self-edge). Collapsing keeps fan-in
-  # queries intact (both nodes share outgoing edges via the shared
-  # body) without duplicating the call-site edges.
+  # arity. `def foo(a, b \\ 1)` is one graph node, `foo/2`; this map
+  # sends a call at either arity (`foo(x)` or `foo(x, y)`) to it.
+  # Recording edges to every synthetic arity instead would produce
+  # phantom self-loops on recursive default-arg defs (a body calling
+  # `foo(...)` would record edges to both `foo/1` and `foo/2`).
   defp build_defined(clauses) do
     clauses
     |> Enum.group_by(& &1.name)
