@@ -45,6 +45,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `CLAUDE.md` (or `.claude/CLAUDE.md`) gets an `@AGENTS.md` import instead,
   and the adze section 0.1.0 wrote into it is removed. It never creates a
   `CLAUDE.md` or edits `CLAUDE.local.md`.
+- The `AGENTS.md` section is shorter (when to reach for adze, plus the
+  exact skill paths); the skill carries the full reference. The installer
+  no longer suggests `mix usage_rules.sync`, which duplicated the skill.
 
 ### Known limitations
 

@@ -91,17 +91,18 @@ doesn't exist:
 cat deps/adze/agents-snippet.md >> AGENTS.md
 ```
 
-### usage_rules (optional, richer context)
+### usage_rules (for agents without skills)
 
-If you use [usage_rules](https://hex.pm/packages/usage_rules) for your
-`AGENTS.md`:
+The skill already gives agents the full reference when they need it. If your
+agent doesn't load skills and you use
+[usage_rules](https://hex.pm/packages/usage_rules), you can copy the reference
+(error shapes, API details, conventions) into `AGENTS.md` instead:
 
 ```bash
 mix usage_rules.sync AGENTS.md adze
 ```
 
-This pulls the full usage-rules reference (error shapes, API details,
-conventions) into your rules file for any agent that reads it.
+It's loaded into every session, so skip it if your agent loads the skill.
 
 ## When to Reach for Adze
 

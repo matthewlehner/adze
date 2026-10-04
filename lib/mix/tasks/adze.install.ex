@@ -218,12 +218,6 @@ defmodule Mix.Tasks.Adze.Install do
 
     #{Enum.map_join(files, "\n", &"  • #{&1}")}
 
-    ## usage_rules integration (optional)
-
-    For richer rules (error shapes, API details), also sync via usage_rules:
-
-        mix usage_rules.sync AGENTS.md adze
-
     ## Quick test
 
         mix adze ls --file lib/your_app.ex
