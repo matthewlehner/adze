@@ -15,9 +15,31 @@ tedious and error-prone as multi-edits.
 Built on [Sourceror](https://hex.pm/packages/sourceror) and
 [Igniter](https://hex.pm/packages/igniter).
 
+## Requirements
+
+- Elixir `~> 1.19`.
+- Adze must be a dependency of the project you're working on. It's a Mix task
+  that reads your project's formatter config, `elixirc_paths` and compiled
+  modules (to check `@behaviour` and `use` targets), so there's no global or
+  standalone install.
+- It's a dev-only dependency. Run it as `mix adze ...` from the project root
+  with `MIX_ENV` unset or `dev`.
+
 ## Getting Started
 
-### Recommended: install with agent integration
+Pick one of two install paths. Both end up in the same place.
+
+### Option 1: Igniter (recommended)
+
+[Igniter](https://hex.pm/packages/igniter) adds the dependency and sets up
+agent integration in one step. If your project doesn't already use Igniter,
+install its archive first:
+
+```bash
+mix archive.install hex igniter_new
+```
+
+Then:
 
 ```bash
 mix igniter.install adze
@@ -45,25 +67,21 @@ only one, add the `@AGENTS.md` line yourself.
 Re-run `mix igniter.install adze` after upgrading adze to refresh the skills
 and the `AGENTS.md` section.
 
-### Manual install
+### Option 2: Manual
 
 Add `adze` as a dev dependency:
 
 ```elixir
 def deps do
   [
-    {:adze, "~> 0.1.0", only: :dev}
+    {:adze, "~> 0.1.0", only: [:dev]}
   ]
 end
 ```
 
 Then `mix deps.get`.
 
-> Adze runs as a Mix task inside your project. It reads
-> `Mix.Project.config()` (formatter opts, `elixirc_paths`) so it must
-> run inside a loaded Mix project — there's no standalone binary.
-
-#### Setting up agent integration manually
+#### Agent integration
 
 After fetching deps, copy the skill file and add a reference to your
 agent config:
@@ -90,19 +108,6 @@ doesn't exist:
 ```bash
 cat deps/adze/agents-snippet.md >> AGENTS.md
 ```
-
-### usage_rules (for agents without skills)
-
-The skill already gives agents the full reference when they need it. If your
-agent doesn't load skills and you use
-[usage_rules](https://hex.pm/packages/usage_rules), you can copy the reference
-(error shapes, API details, conventions) into `AGENTS.md` instead:
-
-```bash
-mix usage_rules.sync AGENTS.md adze
-```
-
-It's loaded into every session, so skip it if your agent loads the skill.
 
 ## When to Reach for Adze
 
