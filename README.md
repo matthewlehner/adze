@@ -109,11 +109,11 @@ It's loaded into every session, so skip it if your agent loads the skill.
 | You're about to… | Use this instead |
 |------------------|------------------|
 | Read an Elixir file > 200 lines | `mix adze ls --file PATH` first, then read only the line range you need |
-| Multi-edit a `defmodule` rename across the project | `mix adze rename! --from Old --to New` |
-| Copy a function + its private helpers into a new module by hand | `mix adze extract! --file ... --definition fun/N --module New.Module` |
-| Reorder defs inside a module with multi-edit | `mix adze mv! --file ... --definition fun/N --before other/M` |
+| Multi-edit a `defmodule` rename across the project | `mix adze rename --from Old --to New` |
+| Copy a function + its private helpers into a new module by hand | `mix adze extract --file ... --definition fun/N --module New.Module` |
+| Reorder defs inside a module with multi-edit | `mix adze mv --file ... --definition fun/N --before other/M` |
 | Grep for callers of `Mod.fun` across the project | `mix adze find-callers --target Mod.fun/N` |
-| Convert a `def` to `defp` after eyeballing call sites | `mix adze extract-private! --file ... --definition fun/N` |
+| Convert a `def` to `defp` after eyeballing call sites | `mix adze extract-private --file ... --definition fun/N` |
 | Eyeball a module's `alias`/`import`/`use` clauses | `mix adze aliases --file PATH` |
 
 If none of these match, fall back to standard read/edit/grep.
@@ -131,13 +131,14 @@ mix adze find-callers --target MyApp.Accounts.register/1
 mix adze find-callers --target MyApp.Accounts.register/1,2
 ```
 
-### Preview, then write
+### Write, then compile
 
-Every write command is a dry-run unless you add `!`. The dry-run prints what
-would change and touches nothing:
+Write commands write to disk and print what they changed. Every safety check
+runs before anything is written, so a refused command leaves your files
+alone. Add `--dry-run` to see the same output without writing:
 
 ```
-$ mix adze extract --file lib/sample.ex --definition greet/1 --module Sample.Greeter
+$ mix adze extract --file lib/sample.ex --definition greet/1 --module Sample.Greeter --dry-run
 # new file: ./lib/sample/greeter.ex (Sample.Greeter)
 defmodule Sample.Greeter do
   @spec greet(String.t()) :: String.t()
@@ -172,10 +173,10 @@ end
   source:9  require Logger
 ```
 
-Read the diff (and the dropped directives), then apply:
+Drop `--dry-run` to apply it, then compile:
 
 ```bash
-mix adze extract! --file lib/sample.ex --definition greet/1 --module Sample.Greeter
+mix adze extract --file lib/sample.ex --definition greet/1 --module Sample.Greeter
 mix compile --warnings-as-errors
 ```
 
@@ -194,15 +195,15 @@ mix compile --warnings-as-errors
 
 ### Write (refactoring)
 
-Every write op has a **dry-run** variant (no `!`, prints a diff) and a
-**bang** variant (`!`, writes to disk). Always preview first.
+Each write op writes to disk and prints a diff. Add `--dry-run` to print
+the diff without writing.
 
 | Command | Description |
 |---------|-------------|
-| `mix adze mv! --file PATH --definition fun/N --before other/M` | Reorder a definition within a module |
-| `mix adze extract! --file PATH --definition fun/N --module New.Mod` | Extract function + closure into a new module |
-| `mix adze rename! --from Old.Mod --to New.Mod` | Rename a module across the entire project |
-| `mix adze extract-private! --file PATH --definition fun/N` | Flip `def` → `defp` when no external callers exist |
+| `mix adze mv --file PATH --definition fun/N --before other/M` | Reorder a definition within a module |
+| `mix adze extract --file PATH --definition fun/N --module New.Mod` | Extract function + closure into a new module |
+| `mix adze rename --from Old.Mod --to New.Mod` | Rename a module across the entire project |
+| `mix adze extract-private --file PATH --definition fun/N` | Flip `def` → `defp` when no external callers exist |
 
 <details>
 <summary>Example output: <code>mix adze ls</code></summary>
@@ -266,7 +267,7 @@ use Igniter for safe multi-file rewrites with formatting preservation.
 
 ## Limitations
 
-`find-callers` (and by extension `extract-private!`) resolves qualified calls,
+`find-callers` (and by extension `extract-private`) resolves qualified calls,
 pipe variants, and `&Mod.fun/n` captures — including alias resolution. It
 **won't find:**
 

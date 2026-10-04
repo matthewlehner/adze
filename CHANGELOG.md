@@ -38,6 +38,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- CLI write ops (`mv`, `extract`, `rename`, `extract-private`) now write by
+  default. Pass `--dry-run` to preview. The `!` forms (`mv!`, `extract!`,
+  `rename!`, `extract-private!`) are removed and exit with a pointer to the
+  new behaviour. The library API (`Adze.mv/2`, `Adze.mv!/2`, …) is unchanged.
+- Agent docs (skill, agents snippet) no longer tell agents to dry-run before
+  every write.
 - `mix adze.install` always installs both skills (`.claude/skills/` and
   `.agents/skills/`); the `--claude` / `--codex` flags are gone (passing
   them is harmless). It now writes its instructions to `AGENTS.md`. Since

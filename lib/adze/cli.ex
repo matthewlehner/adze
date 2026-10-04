@@ -8,8 +8,8 @@ defmodule Adze.CLI do
       adze outline --file lib/foo.ex --format json
       adze deps --file lib/foo.ex
       adze deps --file lib/foo.ex --definition bar/2
+      adze mv   --file lib/foo.ex --definition bar/2 --before baz/1 --dry-run
       adze mv   --file lib/foo.ex --definition bar/2 --before baz/1
-      adze mv!  --file lib/foo.ex --definition bar/2 --before baz/1
 
   `ls` and `outline` are aliases.
   """
@@ -55,28 +55,24 @@ defmodule Adze.CLI do
         run_find_callers(args)
 
       {:ok, %{op: :"extract-private"} = args} ->
-        run_extract_private(args, write?: false)
+        run_extract_private(args, write?: not args.dry_run)
 
-      {:ok, %{op: :"extract-private!"} = args} ->
-        run_extract_private(args, write?: true)
-
-      {:ok, %{op: :mv, file: file, format: format, definition: definition, before: before}} ->
-        run_mv(file, format, definition, before, write?: false)
-
-      {:ok, %{op: :mv!, file: file, format: format, definition: definition, before: before}} ->
-        run_mv(file, format, definition, before, write?: true)
+      {:ok, %{op: :mv} = args} ->
+        run_mv(args.file, args.format, args.definition, args.before, write?: not args.dry_run)
 
       {:ok, %{op: :extract} = args} ->
-        run_extract(args, write?: false)
-
-      {:ok, %{op: :extract!} = args} ->
-        run_extract(args, write?: true)
+        run_extract(args, write?: not args.dry_run)
 
       {:ok, %{op: :rename} = args} ->
-        run_rename(args, write?: false)
+        run_rename(args, write?: not args.dry_run)
 
-      {:ok, %{op: :rename!} = args} ->
-        run_rename(args, write?: true)
+      {:ok, %{op: op}} when op in [:"extract-private!", :mv!, :extract!, :rename!] ->
+        base = op |> Atom.to_string() |> String.trim_trailing("!")
+
+        die(
+          "`#{op}` was removed: `#{base}` now writes by default. " <>
+            "Pass --dry-run to preview without writing."
+        )
 
       {:ok, %{op: op}} ->
         die("unknown op: #{op}\n\n" <> help())
@@ -556,7 +552,7 @@ defmodule Adze.CLI do
       |> Enum.map_join("\n", fn %{path: p, line: l, short: s} -> "  #{p}:#{l}  #{s}.…" end)
 
     """
-    rename! refused — the rewrite would leave #{length(refs)} surviving bare-alias \
+    rename refused — the rewrite would leave #{length(refs)} surviving bare-alias \
     reference(s) to the old module's short name. These would compile-break on the \
     next `mix compile`. Locations:
 
@@ -615,7 +611,8 @@ defmodule Adze.CLI do
           path: :string,
           mix_root: :string,
           target: :string,
-          force: :boolean
+          force: :boolean,
+          dry_run: :boolean
         ],
         aliases: [f: :file]
       )
@@ -640,7 +637,8 @@ defmodule Adze.CLI do
          path: Keyword.get(parsed, :path),
          mix_root: Keyword.get(parsed, :mix_root),
          target: Keyword.get(parsed, :target),
-         force: Keyword.get(parsed, :force, false)
+         force: Keyword.get(parsed, :force, false),
+         dry_run: Keyword.get(parsed, :dry_run, false)
        }}
     end
   end
@@ -727,29 +725,28 @@ defmodule Adze.CLI do
                        (--target required)
       extract-private  Flip a public def to defp (or defmacro→defmacrop,
                        defguard→defguardp) when find-callers reports
-                       zero external callers. Dry-run; prints diff.
-      extract-private! Same as extract-private but writes the file.
-      mv               Reorder a def within a module. Dry-run; prints diff.
-      mv!              Same as mv but actually writes the file.
+                       zero external callers. Writes the file; prints
+                       the diff.
+      mv               Reorder a def within a module. Writes the file;
+                       prints the diff.
                        Note: diff shows the minimal edit, so when two
                        defs are swapped Myers may render the *anchor*
                        moving rather than --definition. The resulting
                        source is correct either way.
       extract          Cut a def (+ its private closure) into a brand-new
-                       module file. Dry-run; prints the new file and
-                       a diff of the source.
-      extract!         Same as extract but writes both files.
+                       module file. Writes both files; prints the new
+                       file and a diff of the source.
       rename           Rename a module across the entire project. Updates
                        defmodule, alias/use/import/require, every call
                        site, the corresponding test module, and moves
-                       the file to its canonical location. Dry-run;
-                       prints per-file diffs. Post-check scans for
-                       surviving short-name refs and reports them in
-                       warnings.
-      rename!          Same as rename but writes every touched file.
-                       Refuses to write if the post-check found
-                       surviving refs (would compile-break). Pass
-                       --force to override.
+                       the file to its canonical location. Writes every
+                       touched file; prints per-file diffs. Refuses to
+                       write if a post-check finds surviving short-name
+                       refs (would compile-break). Pass --force to
+                       override.
+
+    Write ops (extract-private, mv, extract, rename) write by default.
+    Pass --dry-run to print the same output without touching disk.
 
     FLAGS
       --file PATH      Source file to operate on
@@ -773,7 +770,9 @@ defmodule Adze.CLI do
                            --target MyApp.Foo.bar/2). A comma list
                            matches several arities
                            (--target MyApp.Foo.bar/1,2).
-      --force              Skip the post-check guard on rename! and
+      --dry-run            For write ops: compute and print the result,
+                           but write nothing.
+      --force              Skip the post-check guard on rename and
                            write even when surviving short refs are
                            detected. Use when you've verified the
                            refs are false positives. For
@@ -791,14 +790,11 @@ defmodule Adze.CLI do
       adze aliases --file lib/my_app/router.ex
       adze find-callers --target MyApp.Foo.bar/2
       adze find-callers --target MyApp.Foo.bar          # any arity
-      adze extract-private  --file lib/my_app/router.ex --definition helper/2
-      adze extract-private! --file lib/my_app/router.ex --definition helper/2
-      adze mv  --file lib/my_app/router.ex --definition dispatch/2 --before init/1
-      adze mv! --file lib/my_app/router.ex --definition dispatch/2 --before init/1
-      adze extract  --file lib/my_app/router.ex --definition dispatch/2 --module MyApp.Dispatcher
-      adze extract! --file lib/my_app/router.ex --definition dispatch/2 --module MyApp.Dispatcher
-      adze rename  --from MyApp.Old --to MyApp.New
-      adze rename! --from MyApp.Old --to MyApp.New
+      adze extract-private --file lib/my_app/router.ex --definition helper/2
+      adze mv --file lib/my_app/router.ex --definition dispatch/2 --before init/1
+      adze extract --file lib/my_app/router.ex --definition dispatch/2 --module MyApp.Dispatcher
+      adze rename --from MyApp.Old --to MyApp.New
+      adze rename --from MyApp.Old --to MyApp.New --dry-run
     """
   end
 end

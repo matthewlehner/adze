@@ -11,11 +11,12 @@ defmodule Adze.Rename do
 
   ## CLI
 
-      mix adze rename  --from MyApp.Old --to MyApp.New
-      mix adze rename! --from MyApp.Old --to MyApp.New
+      mix adze rename --from MyApp.Old --to MyApp.New
+      mix adze rename --from MyApp.Old --to MyApp.New --dry-run
 
-  Dry-run by default: prints a diff for every touched file. `rename!`
-  also writes.
+  Writes every touched file and prints its diff. `--dry-run` prints the
+  same diffs without writing. In the library, `rename/1` is the dry-run
+  and `rename!/1` writes.
 
   ## Programmatic
 

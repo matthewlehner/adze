@@ -112,8 +112,8 @@ appear in `dropped_directives`. This is intentional:
 - A missing directive → compile error (loud, fixable).
 - An extra `use` → silent macro execution (dangerous).
 
-Read `dropped_directives` from the dry-run, add back what the target
-needs, then run `extract!`.
+After `extract!`, read `dropped_directives` from the result and add back
+what the target needs.
 
 ### Custom attachable attributes
 
@@ -147,7 +147,7 @@ Won't detect:
 - Dynamic dispatch (`apply/3`, `Module.concat/2`)
 - String-literal module references
 
-`extract-private!` inherits these blind spots. When in doubt, run
+`extract-private` inherits these blind spots. When in doubt, run
 `mix compile --warnings-as-errors` after the flip.
 
 ### After every write op

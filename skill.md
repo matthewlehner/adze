@@ -14,11 +14,11 @@ the compiler catches mistakes.
 | You're about to... | Use this instead |
 | --- | --- |
 | Read an Elixir file > 200 lines | `mix adze ls --file PATH` first, then read only the line range you need |
-| Multi-edit a `defmodule` rename across the project | `mix adze rename! --from Old --to New` |
-| Copy a function + its private helpers into a new module by hand | `mix adze extract! --file ... --definition fun/N --module New.Module` |
-| Reorder defs inside a module with multi-edit | `mix adze mv! --file ... --definition fun/N --before other/M` |
+| Multi-edit a `defmodule` rename across the project | `mix adze rename --from Old --to New` |
+| Copy a function + its private helpers into a new module by hand | `mix adze extract --file ... --definition fun/N --module New.Module` |
+| Reorder defs inside a module with multi-edit | `mix adze mv --file ... --definition fun/N --before other/M` |
 | Grep for callers of `Mod.fun` across the project | `mix adze find-callers --target Mod.fun/N` |
-| Convert a `def` to `defp` after eyeballing call sites | `mix adze extract-private! --file ... --definition fun/N` |
+| Convert a `def` to `defp` after eyeballing call sites | `mix adze extract-private --file ... --definition fun/N` |
 | Eyeball a module's `alias`/`import`/`use` clauses | `mix adze aliases --file PATH` |
 
 If none of these match, fall back to standard Read/Edit/Grep.
@@ -98,37 +98,42 @@ Walks every project source for qualified calls, pipe variants, and
 `alias Foo, as: F` and brace-form). **Won't find:** unqualified calls
 via `import`, dynamic `apply/3`, string-literal mentions.
 
-## Write ops — dry-run first, then `!`
+## Write ops
 
-**Rule:** dry-run (no `!`) → read diff → bang (`!`) → `mix compile --warnings-as-errors`.
+Write ops write straight to disk and print what they changed. Then run
+`mix compile --warnings-as-errors`. Every refusal check runs before
+anything is written, so a refused op leaves the tree untouched. Undo
+with git if you don't like the result.
 
-### `mv` / `mv!` — reorder within a module
+Add `--dry-run` to print the same output without writing. It's only
+worth it when you can't easily revert (uncommitted changes in the files
+it would touch) or you're just asking "would this work?".
+
+### `mv` — reorder within a module
 
 ```bash
-mix adze mv  --file lib/my_app/router.ex --definition dispatch/2 --before init/1
-mix adze mv! --file lib/my_app/router.ex --definition dispatch/2 --before init/1
+mix adze mv --file lib/my_app/router.ex --definition dispatch/2 --before init/1
 ```
 
 Moves the whole logical definition group (leading comments + `@spec` /
 `@doc` / `@impl` / `@deprecated` / `@since` + all clauses) to just
 before `--before`. Same module only.
 
-### `extract` / `extract!` — cut into a new module file
+### `extract` — cut into a new module file
 
 ```bash
-mix adze extract  --file lib/my_app/router.ex --definition dispatch/2 --module MyApp.Dispatcher
-mix adze extract! --file lib/my_app/router.ex --definition dispatch/2 --module MyApp.Dispatcher
+mix adze extract --file lib/my_app/router.ex --definition dispatch/2 --module MyApp.Dispatcher
 ```
 
 Cuts the target def + its `defp` closure into `lib/my_app/dispatcher.ex`
 (path derived from `--module`; pass `--path` to override). Rewrites
 external callers across the project.
 
-**Before `extract!`:**
+**Notes:**
 
-1. `use` / `import` / `require` are **not** copied — they appear in
-   `dropped_directives` in the dry-run. A missing one is a compile
-   error you can fix after.
+1. `use` / `import` / `require` are **not** copied — they're listed
+   under `dropped_directives` in the output. Add back what the new
+   module needs (the compile step will tell you).
 2. If the target file already exists, it errors. Pick a different name
    or delete the file first.
 3. If the same def name exists in multiple `defmodule`s in the source
@@ -151,28 +156,27 @@ external callers across the project.
 **Known gap:** an import whose module is only known at runtime
 (`import unquote(mod)` inside a `__using__`, with `use Base, Source` at
 the call site) is not detected. Extraction goes through and the bare call
-fails to compile. After `extract!`, run `mix compile --warnings-as-errors`
+fails to compile. After `extract`, run `mix compile --warnings-as-errors`
 and look for "undefined function" at bare calls of the moved def.
 
-### `rename` / `rename!` — module-wide rename
+### `rename` — module-wide rename
 
 ```bash
-mix adze rename  --from MyApp.Old --to MyApp.New
-mix adze rename! --from MyApp.Old --to MyApp.New
+mix adze rename --from MyApp.Old --to MyApp.New
 ```
 
 Updates `defmodule`, every `alias` / `use` / `import` / `require`, all
 call sites, the test module, string-literal references, and moves the
 file to its canonical location.
 
-If `rename` returns `surviving_references`, inspect each — fix real ones
-by hand, pass `--force` for false positives, then re-run.
+If `rename` refuses with surviving references, nothing was written.
+Inspect each — fix real ones by hand, or pass `--force` for false
+positives — then re-run.
 
-### `extract-private` / `extract-private!` — flip `def` → `defp`
+### `extract-private` — flip `def` → `defp`
 
 ```bash
-mix adze extract-private  --file lib/my_app/router.ex --definition helper/2
-mix adze extract-private! --file lib/my_app/router.ex --definition helper/2
+mix adze extract-private --file lib/my_app/router.ex --definition helper/2
 ```
 
 Runs `find-callers` first. If zero external callers, flips `def` →
@@ -191,26 +195,23 @@ Refuses on `defdelegate`. Inherits `find-callers`' blind spots.
 ### Splitting a fat module
 
 1. `mix adze ls-extract --file ... --definition target/N` — preview the closure
-2. `mix adze extract --file ... --definition target/N --module New.Module` — dry-run
-3. Read `source_diff`, `target_content`, `caller_diffs`, `dropped_directives`
-4. `mix adze extract! ...` — write
-5. `mix compile --warnings-as-errors` — fix any missing directives
+2. `mix adze extract --file ... --definition target/N --module New.Module`
+3. `mix compile --warnings-as-errors` — add back any `dropped_directives` the new module needs
 
 ### Renaming a module
 
-1. `mix adze rename --from Old --to New` — dry-run
-2. If `surviving_references`: fix real ones by hand or `--force` for false positives
-3. `mix adze rename! --from Old --to New` — write
-4. `mix compile --warnings-as-errors`
+1. `mix adze rename --from Old --to New`
+2. If it refuses with surviving references: fix real ones by hand or re-run with `--force` for false positives
+3. `mix compile --warnings-as-errors`
 
 ### Privatizing an over-exposed helper
 
 1. `mix adze find-callers --target Mod.fun/N` — confirm no external callers
-2. `mix adze extract-private! --file ... --definition fun/N` — flip
+2. `mix adze extract-private --file ... --definition fun/N` — flip
 
 ## Important notes
 
-- **All read ops are pure** — side effects only in `!` variants
+- **Read ops never write** — only `mv` / `extract` / `rename` / `extract-private` touch disk, and not with `--dry-run`
 - **Every op accepts `--format json`** — text (default) is optimized for LLMs reading inline
 - **Runs as a Mix task, not a binary** — needs `Mix.Project.config()` loaded
 - **Always compile after writes** — `mix compile --warnings-as-errors` catches what adze can't (imports, dynamic dispatch)
@@ -221,10 +222,10 @@ Refuses on `defdelegate`. Inherits `find-callers`' blind spots.
 
 **Before reading any Elixir file over 200 lines, run `mix adze ls --file PATH` first.** Read only the line range you need.
 
-**When the user asks to split or extract from a module,** run `mix adze ls-extract` to find the natural closure, then `mix adze extract!` to execute.
+**When the user asks to split or extract from a module,** run `mix adze ls-extract` to find the natural closure, then `mix adze extract` to execute.
 
-**When you're about to multi-edit a rename across files,** use `mix adze rename!` instead — it handles aliases, call sites, test modules, and file moves.
+**When you're about to multi-edit a rename across files,** use `mix adze rename` instead — it handles aliases, call sites, test modules, and file moves.
 
-**When you see a public function that looks like it should be private,** run `mix adze find-callers` to confirm, then `mix adze extract-private!` to flip.
+**When you see a public function that looks like it should be private,** run `mix adze find-callers` to confirm, then `mix adze extract-private` to flip.
 
 **After any adze write op, always run `mix compile --warnings-as-errors`.** The compiler is your safety net.

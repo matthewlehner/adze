@@ -572,7 +572,7 @@ defmodule Adze.Formatter do
   defp format_warning({:surviving_references, refs}) do
     [
       "  surviving bare-alias references (would compile-break — known Igniter ",
-      "same-namespace bug; rename!/1 will refuse without --force):\n",
+      "same-namespace bug; rename will refuse to write without --force):\n",
       format_refs(refs)
     ]
   end
