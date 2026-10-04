@@ -624,10 +624,9 @@ defmodule Adze.Extract do
       Enum.reduce(directives, {[], []}, fn directive, {kept, dropped} ->
         case directive do
           {:alias, _, _} = node ->
-            if alias_referenced?(node, used_bindings) do
-              {[node | kept], dropped}
-            else
-              {kept, dropped}
+            case trim_alias(node, used_bindings) do
+              nil -> {kept, dropped}
+              trimmed -> {[trimmed | kept], dropped}
             end
 
           {kind, _, _} = node when kind in [:use, :import, :require] ->
@@ -685,10 +684,38 @@ defmodule Adze.Extract do
 
   # `alias Foo.Bar` → binding atom :Bar
   # `alias Foo.Bar, as: Baz` → binding atom :Baz
-  # `alias Foo.{Bar, Baz}` → keep if *any* member binding referenced (v1)
-  defp alias_referenced?({:alias, _, args}, used_bindings) do
-    args
-    |> AST.alias_bindings()
-    |> Enum.any?(&MapSet.member?(used_bindings, &1))
+  # `alias Foo.{Bar, Baz}` → trimmed to the referenced members
+  # Returns the node to keep (possibly trimmed), or nil to drop it.
+  defp trim_alias(
+         {:alias, _, [{{:., _, [base, :{}]}, _, members}]} = node,
+         used_bindings
+       ) do
+    kept = Enum.filter(members, &member_referenced?(&1, used_bindings))
+
+    cond do
+      kept == [] ->
+        nil
+
+      kept == members ->
+        node
+
+      match?([{:__aliases__, _, _}], kept) ->
+        {:__aliases__, _, base_parts} = base
+        [{:__aliases__, _, parts}] = kept
+        {:alias, [], [{:__aliases__, [], base_parts ++ parts}]}
+
+      true ->
+        {:alias, [], [{{:., [], [base, :{}]}, [], kept}]}
+    end
   end
+
+  defp trim_alias({:alias, _, args} = node, used_bindings) do
+    if args |> AST.alias_bindings() |> Enum.any?(&MapSet.member?(used_bindings, &1)),
+      do: node
+  end
+
+  defp member_referenced?({:__aliases__, _, parts}, used_bindings),
+    do: MapSet.member?(used_bindings, List.last(parts))
+
+  defp member_referenced?(_, _), do: false
 end

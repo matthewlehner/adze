@@ -108,6 +108,28 @@ defmodule AdzeExtractTest do
       refute result.target_content =~ ~r/alias MyApp\.Other/
     end
 
+    test "only the used members of a brace alias are copied to target" do
+      source = """
+      defmodule MyApp.Source do
+        alias MyApp.{Helper, Other, Third}
+
+        def use_helper(x), do: Helper.shift(x)
+        def use_rest(x), do: Other.a(x) + Third.b(x)
+      end
+      """
+
+      {:ok, result} =
+        Extract.extract(source,
+          definition: "use_helper/1",
+          module: "MyApp.Use",
+          path: "/tmp/__nonexistent_target__.ex"
+        )
+
+      assert result.target_content =~ ~r/alias MyApp\.(\{)?Helper\b/
+      refute result.target_content =~ "Other"
+      refute result.target_content =~ "Third"
+    end
+
     test "alias with :as binding matches by the as-name" do
       source = """
       defmodule MyApp.Source do

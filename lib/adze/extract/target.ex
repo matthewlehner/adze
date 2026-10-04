@@ -32,7 +32,7 @@ defmodule Adze.Extract.Target do
 
     directive_blocks =
       directives
-      |> Enum.map(&Render.slice_node_text(&1, source_lines))
+      |> Enum.map(&render_directive(&1, source_lines))
       |> Enum.reject(&(&1 == ""))
 
     closure_blocks =
@@ -63,6 +63,11 @@ defmodule Adze.Extract.Target do
     raw = "defmodule #{target_module} do\n#{body}\nend\n"
     Render.reformat(raw, formatter_opts)
   end
+
+  # Trimmed aliases are synthesized without position metadata, so print
+  # them from the AST; everything else is sliced verbatim.
+  defp render_directive({:alias, [], _} = node, _source_lines), do: Sourceror.to_string(node)
+  defp render_directive(node, source_lines), do: Render.slice_node_text(node, source_lines)
 
   # If the def has a typespec attribute referencing a local type, render
   # the whole group from AST (with type calls qualified). Same for bodies
