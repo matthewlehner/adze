@@ -55,16 +55,17 @@ defmodule Adze.CLI do
         run_find_callers(args)
 
       {:ok, %{op: :"extract-private"} = args} ->
-        run_extract_private(args, write?: not args.dry_run)
+        run_extract_private(write_args(args), write?: not args.dry_run)
 
       {:ok, %{op: :mv} = args} ->
+        args = write_args(args)
         run_mv(args.file, args.format, args.definition, args.before, write?: not args.dry_run)
 
       {:ok, %{op: :extract} = args} ->
-        run_extract(args, write?: not args.dry_run)
+        run_extract(write_args(args), write?: not args.dry_run)
 
       {:ok, %{op: :rename} = args} ->
-        run_rename(args, write?: not args.dry_run)
+        run_rename(write_args(args), write?: not args.dry_run)
 
       {:ok, %{op: op}} when op in [:"extract-private!", :mv!, :extract!, :rename!] ->
         base = op |> Atom.to_string() |> String.trim_trailing("!")
@@ -81,6 +82,14 @@ defmodule Adze.CLI do
         die(msg <> "\n\n" <> help())
     end
   end
+
+  # A real write in text mode prints a summary (files touched, +/- counts,
+  # anything to act on); the diffs are in `git diff`. `--dry-run` and
+  # `--diff` print the full output. JSON is always full.
+  defp write_args(%{format: :text, dry_run: false, diff: false} = args),
+    do: %{args | format: :summary}
+
+  defp write_args(args), do: args
 
   defp run_outline(nil, _format), do: die("--file is required\n\n" <> help())
 
@@ -175,7 +184,7 @@ defmodule Adze.CLI do
 
     case ep_fun.(args.file, ep_opts) do
       {:ok, result} ->
-        IO.write(Formatter.format_extract_private(result, args.format))
+        IO.write(Formatter.format_extract_private(Map.put(result, :path, args.file), args.format))
 
       {:error, reason} ->
         die(extract_private_error(reason, args))
@@ -336,7 +345,7 @@ defmodule Adze.CLI do
 
     case mv_fun.(file, definition: definition, before: before) do
       {:ok, result} ->
-        IO.write(Formatter.format_mv(result, format))
+        IO.write(Formatter.format_mv(Map.put(result, :path, file), format))
 
       {:error, reason} ->
         die(mv_error(reason, file))
@@ -405,7 +414,7 @@ defmodule Adze.CLI do
 
     case extract_fun.(args.file, extract_opts) do
       {:ok, result} ->
-        IO.write(Formatter.format_extract(result, args.format))
+        IO.write(Formatter.format_extract(Map.put(result, :path, args.file), args.format))
 
       {:error, reason} ->
         die(extract_error(reason, args))
@@ -612,7 +621,8 @@ defmodule Adze.CLI do
           mix_root: :string,
           target: :string,
           force: :boolean,
-          dry_run: :boolean
+          dry_run: :boolean,
+          diff: :boolean
         ],
         aliases: [f: :file]
       )
@@ -638,7 +648,8 @@ defmodule Adze.CLI do
          mix_root: Keyword.get(parsed, :mix_root),
          target: Keyword.get(parsed, :target),
          force: Keyword.get(parsed, :force, false),
-         dry_run: Keyword.get(parsed, :dry_run, false)
+         dry_run: Keyword.get(parsed, :dry_run, false),
+         diff: Keyword.get(parsed, :diff, false)
        }}
     end
   end
@@ -725,28 +736,28 @@ defmodule Adze.CLI do
                        (--target required)
       extract-private  Flip a public def to defp (or defmacro→defmacrop,
                        defguard→defguardp) when find-callers reports
-                       zero external callers. Writes the file; prints
-                       the diff.
-      mv               Reorder a def within a module. Writes the file;
-                       prints the diff.
+                       zero external callers. Writes the file.
+      mv               Reorder a def within a module. Writes the file.
                        Note: diff shows the minimal edit, so when two
                        defs are swapped Myers may render the *anchor*
                        moving rather than --definition. The resulting
                        source is correct either way.
       extract          Cut a def (+ its private closure) into a brand-new
-                       module file. Writes both files; prints the new
-                       file and a diff of the source.
+                       module file. Writes both files and rewrites
+                       callers.
       rename           Rename a module across the entire project. Updates
                        defmodule, alias/use/import/require, every call
                        site, the corresponding test module, and moves
                        the file to its canonical location. Writes every
-                       touched file; prints per-file diffs. Refuses to
-                       write if a post-check finds surviving short-name
-                       refs (would compile-break). Pass --force to
-                       override.
+                       touched file. Refuses to write if a post-check
+                       finds surviving short-name refs (would
+                       compile-break). Pass --force to override.
 
-    Write ops (extract-private, mv, extract, rename) write by default.
-    Pass --dry-run to print the same output without touching disk.
+    Write ops (extract-private, mv, extract, rename) write by default and
+    print a summary: files touched with +/- line counts, plus anything to
+    act on (dropped directives, promotions, warnings). See `git diff` for
+    the changes, or pass --diff to print them. --dry-run prints the full
+    output without touching disk.
 
     FLAGS
       --file PATH      Source file to operate on
@@ -770,8 +781,10 @@ defmodule Adze.CLI do
                            --target MyApp.Foo.bar/2). A comma list
                            matches several arities
                            (--target MyApp.Foo.bar/1,2).
-      --dry-run            For write ops: compute and print the result,
-                           but write nothing.
+      --dry-run            For write ops: print the full result (diffs,
+                           new file contents) but write nothing.
+      --diff               For write ops: print the full result instead
+                           of the summary.
       --force              Skip the post-check guard on rename and
                            write even when surviving short refs are
                            detected. Use when you've verified the

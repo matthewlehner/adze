@@ -133,9 +133,11 @@ mix adze find-callers --target MyApp.Accounts.register/1,2
 
 ### Write, then compile
 
-Write commands write to disk and print what they changed. Every safety check
-runs before anything is written, so a refused command leaves your files
-alone. Add `--dry-run` to see the same output without writing:
+Write commands write to disk and print a summary: the files they touched with
++/- line counts, and anything you need to act on. Every safety check runs
+before anything is written, so a refused command leaves your files alone. Use
+`git diff` for the full changes, or add `--dry-run` to see them without
+writing:
 
 ```
 $ mix adze extract --file lib/sample.ex --definition greet/1 --module Sample.Greeter --dry-run
@@ -173,7 +175,22 @@ end
   source:9  require Logger
 ```
 
-Drop `--dry-run` to apply it, then compile:
+Drop `--dry-run` to apply it. You get the summary:
+
+```
+$ mix adze extract --file lib/sample.ex --definition greet/1 --module Sample.Greeter
+# extract → Sample.Greeter
+  created  ./lib/sample/greeter.ex  (8 lines)
+  updated  lib/sample.ex  (+0 −7)
+
+# dropped directives (use / import / require)
+# add back to the new target module if the build needs them.
+  source:6  use GenServer
+  source:8  import Enum, only: [map: 2]
+  source:9  require Logger
+```
+
+Then compile:
 
 ```bash
 mix adze extract --file lib/sample.ex --definition greet/1 --module Sample.Greeter
@@ -195,8 +212,8 @@ mix compile --warnings-as-errors
 
 ### Write (refactoring)
 
-Each write op writes to disk and prints a diff. Add `--dry-run` to print
-the diff without writing.
+Each write op writes to disk and prints a summary. Add `--diff` to print the
+full diffs too, or `--dry-run` to print them without writing.
 
 | Command | Description |
 |---------|-------------|

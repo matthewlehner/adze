@@ -49,6 +49,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `ls` (text): adjacent clauses of one function render as a single line
   spanning all of them, e.g. `p mv_error/2   L346–386  (10 clauses)`. JSON
   output still has one entry per clause.
+- CLI write ops print a summary by default — files touched with +/- line
+  counts, plus dropped directives, promotions and warnings — instead of
+  every diff and the whole new file. `--diff` prints the full output;
+  `--dry-run` still does. JSON output is unchanged.
 - `mix adze.install` always installs both skills (`.claude/skills/` and
   `.agents/skills/`); the `--claude` / `--codex` flags are gone (passing
   them is harmless). It now writes its instructions to `AGENTS.md`. Since

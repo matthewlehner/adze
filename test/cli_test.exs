@@ -57,13 +57,24 @@ defmodule AdzeCLITest do
   end
 
   describe "--dry-run" do
-    test "mv writes by default", ctx do
-      ExUnit.CaptureIO.capture_io(fn ->
-        CLI.main(~w(mv --file #{ctx.source} --definition b/1 --before a/1))
-      end)
+    test "mv writes by default and prints a summary, not the diff", ctx do
+      out =
+        ExUnit.CaptureIO.capture_io(fn ->
+          CLI.main(~w(mv --file #{ctx.source} --definition b/1 --before a/1))
+        end)
 
-      assert File.read!(ctx.source) != ctx.content
       assert File.read!(ctx.source) =~ ~r/def b.*def a/s
+      assert out == "# mv\n  updated  #{ctx.source}  (+1 −1)\n"
+    end
+
+    test "mv --diff writes and prints the full diff", ctx do
+      out =
+        ExUnit.CaptureIO.capture_io(fn ->
+          CLI.main(~w(mv --file #{ctx.source} --definition b/1 --before a/1 --diff))
+        end)
+
+      assert File.read!(ctx.source) =~ ~r/def b.*def a/s
+      assert out =~ "--- a\n+++ b\n"
     end
 
     test "mv --dry-run prints the diff and leaves the file alone", ctx do

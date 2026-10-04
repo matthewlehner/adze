@@ -105,8 +105,27 @@ defmodule Adze.Formatter do
     |> JSON.encode!()
   end
 
+  def format_extract_private(result, :summary) do
+    IO.iodata_to_binary([
+      extract_private_header(result),
+      summary_line("updated", result.path, result.diff)
+    ])
+  end
+
   def format_extract_private(result, :text) do
-    header = [
+    header = extract_private_header(result)
+
+    diff =
+      case result.diff do
+        "" -> "(no changes)\n"
+        d -> d
+      end
+
+    IO.iodata_to_binary([header, "\n", diff])
+  end
+
+  defp extract_private_header(result) do
+    [
       "# extract-private ",
       result.module,
       ".",
@@ -119,15 +138,52 @@ defmodule Adze.Formatter do
       Atom.to_string(result.to_kind),
       "\n"
     ]
-
-    diff =
-      case result.diff do
-        "" -> "(no changes)\n"
-        d -> d
-      end
-
-    IO.iodata_to_binary([header, "\n", diff])
   end
+
+  # --- write summaries ---------------------------------------------------
+  #
+  # `:summary` is what a write prints by default in text mode: what was
+  # touched and how much, plus anything the caller has to act on. The
+  # full diffs are in `git diff` (or `--diff` / `--dry-run`).
+
+  defp summary_line(verb, path, diff) do
+    {ins, del} = diff_counts(diff)
+    ["  ", verb, "  ", path, "  (+", Integer.to_string(ins), " −", Integer.to_string(del), ")\n"]
+  end
+
+  # Counts both diff shapes adze emits: `Adze.Diff` unified hunks
+  # (`+line` / `-line`) and Rewrite's numbered rename diffs
+  # (`  12     - |line`).
+  @doc false
+  def diff_counts(diff) do
+    diff
+    |> String.split("\n")
+    |> Enum.reduce({0, 0}, fn line, {i, d} ->
+      case diff_marker(line) do
+        :ins -> {i + 1, d}
+        :del -> {i, d + 1}
+        nil -> {i, d}
+      end
+    end)
+  end
+
+  defp diff_marker("+++ b"), do: nil
+  defp diff_marker("--- a"), do: nil
+  defp diff_marker("+" <> _), do: :ins
+  defp diff_marker("-" <> _), do: :del
+
+  defp diff_marker(line) do
+    case Regex.run(~r/^[\s\d]*([+-]) \|/, line) do
+      [_, "+"] -> :ins
+      [_, "-"] -> :del
+      _ -> nil
+    end
+  end
+
+  defp line_count(""), do: 0
+
+  defp line_count(content),
+    do: content |> String.trim_trailing("\n") |> String.split("\n") |> length()
 
   # --- find-callers ------------------------------------------------------
 
@@ -390,6 +446,10 @@ defmodule Adze.Formatter do
     |> JSON.encode!()
   end
 
+  def format_mv(%{diff: diff, path: path}, :summary) do
+    IO.iodata_to_binary(["# mv\n", summary_line("updated", path, diff)])
+  end
+
   def format_mv(%{diff: diff}, :text) do
     case diff do
       "" -> "(no changes)\n"
@@ -425,6 +485,28 @@ defmodule Adze.Formatter do
     |> JSON.encode!()
   end
 
+  def format_extract(result, :summary) do
+    callers =
+      result
+      |> Map.get(:caller_diffs, %{})
+      |> Enum.sort_by(fn {path, _} -> path end)
+      |> Enum.map(fn {path, diff} -> summary_line("updated", path, diff) end)
+
+    IO.iodata_to_binary([
+      "# extract → ",
+      result.target_module,
+      "\n",
+      "  created  ",
+      result.target_path,
+      "  (",
+      Integer.to_string(line_count(result.target_content)),
+      " lines)\n",
+      summary_line("updated", result.path, result.source_diff),
+      callers,
+      extract_trailer(result)
+    ])
+  end
+
   def format_extract(result, :text) do
     IO.iodata_to_binary([
       "# new file: ",
@@ -440,6 +522,14 @@ defmodule Adze.Formatter do
         d -> d
       end,
       extract_caller_block(Map.get(result, :caller_diffs, %{})),
+      extract_trailer(result)
+    ])
+  end
+
+  # Promotions and dropped directives: things the caller may need to act
+  # on, so both the full and the summary output include them.
+  defp extract_trailer(result) do
+    [
       extract_promoted_block(
         Map.get(result, :promoted, []),
         [" (was private; marked @doc false)\n"],
@@ -455,7 +545,7 @@ defmodule Adze.Formatter do
         result.source_module
       ),
       extract_dropped_block(Map.get(result, :dropped_directives, []))
-    ])
+    ]
   end
 
   defp extract_caller_block(diffs) when map_size(diffs) == 0, do: []
@@ -521,25 +611,21 @@ defmodule Adze.Formatter do
     |> JSON.encode!()
   end
 
+  def format_rename(result, :summary) do
+    files =
+      result.diffs
+      |> Enum.sort_by(fn {path, _} -> path end)
+      |> Enum.map(fn {path, diff} -> summary_line("updated", path, diff) end)
+
+    IO.iodata_to_binary([
+      rename_header(result),
+      rename_moves_block(result.moves),
+      if(files == [], do: "\n(no file changes)\n", else: ["\n# files\n", files]),
+      rename_notes_block(result)
+    ])
+  end
+
   def format_rename(result, :text) do
-    header = [
-      "# rename ",
-      inspect(result.from),
-      " → ",
-      inspect(result.to),
-      "\n"
-    ]
-
-    moves_block =
-      case result.moves do
-        m when map_size(m) == 0 ->
-          []
-
-        m ->
-          lines = Enum.map(m, fn {from, to} -> ["  ", from, " → ", to, "\n"] end)
-          ["\n# moves\n", lines]
-      end
-
     diffs_block =
       case result.diffs do
         d when map_size(d) == 0 ->
@@ -551,19 +637,44 @@ defmodule Adze.Formatter do
           |> Enum.map(fn {path, diff} -> ["\n# ", path, "\n", diff] end)
       end
 
-    warnings_block =
+    IO.iodata_to_binary([
+      rename_header(result),
+      rename_moves_block(result.moves),
+      diffs_block,
+      rename_notes_block(result)
+    ])
+  end
+
+  defp rename_header(result) do
+    [
+      "# rename ",
+      inspect(result.from),
+      " → ",
+      inspect(result.to),
+      "\n"
+    ]
+  end
+
+  defp rename_moves_block(moves) when map_size(moves) == 0, do: []
+
+  defp rename_moves_block(moves) do
+    ["\n# moves\n", Enum.map(moves, fn {from, to} -> ["  ", from, " → ", to, "\n"] end)]
+  end
+
+  defp rename_notes_block(result) do
+    warnings =
       case result.warnings do
         [] -> []
         ws -> ["\n# warnings\n", Enum.map(ws, &format_warning/1)]
       end
 
-    notices_block =
+    notices =
       case result.notices do
         [] -> []
         ns -> ["\n# notices\n", Enum.map(ns, &format_notice/1)]
       end
 
-    IO.iodata_to_binary([header, moves_block, diffs_block, warnings_block, notices_block])
+    [warnings, notices]
   end
 
   # Surviving-reference warnings get a header + a one-line-per-ref

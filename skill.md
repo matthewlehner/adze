@@ -100,14 +100,17 @@ via `import`, dynamic `apply/3`, string-literal mentions.
 
 ## Write ops
 
-Write ops write straight to disk and print what they changed. Then run
+Write ops write straight to disk and print a short summary: files
+touched with +/- line counts, plus anything you must act on (dropped
+directives, promotions, warnings). Then run
 `mix compile --warnings-as-errors`. Every refusal check runs before
-anything is written, so a refused op leaves the tree untouched. Undo
-with git if you don't like the result.
+anything is written, so a refused op leaves the tree untouched. Use
+`git diff` to see the changes and git to undo them.
 
-Add `--dry-run` to print the same output without writing. It's only
-worth it when you can't easily revert (uncommitted changes in the files
-it would touch) or you're just asking "would this work?".
+`--dry-run` prints the full result (diffs, new file contents) without
+writing. It's only worth it when you can't easily revert (uncommitted
+changes in the files it would touch) or you're just asking "would this
+work?". `--diff` writes and prints the full result.
 
 ### `mv` — reorder within a module
 

@@ -63,4 +63,68 @@ defmodule Adze.FormatterTest do
                "# new file: lib/x.ex (X)\ndefmodule X do\nend\n\n# source diff\n(no changes)\n"
     end
   end
+
+  describe "diff_counts/1" do
+    test "counts a unified diff, ignoring the ---/+++ headers" do
+      diff = "--- a\n+++ b\n@@ -1,3 +1,3 @@\n a\n-b\n-c\n+B\n d\n"
+      assert Formatter.diff_counts(diff) == {1, 2}
+    end
+
+    test "counts Rewrite's numbered rename diff" do
+      diff = "  1     - |defmodule A do\n      1 + |defmodule B do\n  2   2   |  def x, do: 1\n"
+      assert Formatter.diff_counts(diff) == {1, 1}
+    end
+  end
+
+  describe ":summary output" do
+    test "extract lists files and +/- counts, keeps what needs acting on" do
+      result = %{
+        path: "lib/my_app/source.ex",
+        target_path: "lib/my_app/helper.ex",
+        target_module: "MyApp.Helper",
+        target_content: "defmodule MyApp.Helper do\n  def a, do: 1\n\n  def b, do: 2\nend\n",
+        source_module: "MyApp.Source",
+        source_diff: "--- a\n+++ b\n@@ -1,2 +1,1 @@\n-x\n-y\n z\n",
+        caller_diffs: %{"lib/b.ex" => "--- a\n+++ b\n-old\n+new\n"},
+        dropped_directives: [%{kind: :use, line: 4, text: "use GenServer"}]
+      }
+
+      assert Formatter.format_extract(result, :summary) == """
+             # extract → MyApp.Helper
+               created  lib/my_app/helper.ex  (5 lines)
+               updated  lib/my_app/source.ex  (+0 −2)
+               updated  lib/b.ex  (+1 −1)
+
+             # dropped directives (use / import / require)
+             # add back to the new target module if the build needs them.
+               source:4  use GenServer
+             """
+    end
+
+    test "rename lists moves, files and warnings" do
+      result = %{
+        from: A.Old,
+        to: A.New,
+        moves: %{"lib/a/old.ex" => "lib/a/new.ex"},
+        diffs: %{
+          "lib/a/old.ex" => "  1     - |defmodule A.Old do\n      1 + |defmodule A.New do\n"
+        },
+        warnings: ["something odd"],
+        notices: []
+      }
+
+      assert Formatter.format_rename(result, :summary) == """
+             # rename A.Old → A.New
+
+             # moves
+               lib/a/old.ex → lib/a/new.ex
+
+             # files
+               updated  lib/a/old.ex  (+1 −1)
+
+             # warnings
+               - something odd
+             """
+    end
+  end
 end
