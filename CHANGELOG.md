@@ -17,6 +17,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the source and could call a moved def (`use Source` counts when
   `Source` defines `__using__`).
 - `deps`: calls in `when` guards now count as calls from the clause.
+- `extract`: files that already contained the text `__adze_keep__` (a
+  string, a comment) are no longer silently edited by the pipe-protection
+  pass.
 - `find-callers`: `__MODULE__.Inner.f()` resolves against the enclosing
   module even when an alias shadows its first segment, and no longer
   creates atoms from module labels.

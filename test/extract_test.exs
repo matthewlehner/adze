@@ -1673,6 +1673,38 @@ defmodule AdzeExtractTest do
     # be rewritten to TargetModule.target(...). Driven by
     # Adze.ProjectRewrite + Igniter.Refactors.Rename.rename_function/4.
 
+    test "leaves files that happen to contain the pipe-protection marker untouched" do
+      files = %{
+        "lib/source.ex" => """
+        defmodule MyApp.Source do
+          def public_entry(x), do: x + 1
+        end
+        """,
+        "lib/caller.ex" => """
+        defmodule MyApp.Caller do
+          def go(x), do: x |> MyApp.Source.public_entry(2)
+        end
+        """,
+        "lib/marker.ex" => """
+        defmodule MyApp.Marker do
+          @marker "__adze_keep__"
+          def marker, do: @marker
+        end
+        """
+      }
+
+      {:ok, result} =
+        Extract.extract_file("lib/source.ex",
+          definition: "public_entry/1",
+          module: "MyApp.PublicEntry",
+          files: files
+        )
+
+      refute Map.has_key?(result.caller_diffs, "lib/marker.ex")
+      # The piped call is really public_entry/2, so it is shielded and kept.
+      refute Map.has_key?(result.caller_diffs, "lib/caller.ex")
+    end
+
     test "rewrites SourceModule.target/n call sites in callers" do
       files = %{
         "lib/source.ex" => """

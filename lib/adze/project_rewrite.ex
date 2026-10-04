@@ -43,11 +43,12 @@ defmodule Adze.ProjectRewrite do
   alias Adze.AliasScope
 
   @enforce_keys [:igniter]
-  defstruct [:igniter, :root, test?: false]
+  defstruct [:igniter, :root, :keep_marker, test?: false]
 
   @type t :: %__MODULE__{
           igniter: Igniter.t(),
           root: Path.t() | nil,
+          keep_marker: String.t() | nil,
           test?: boolean()
         }
 
@@ -574,7 +575,7 @@ defmodule Adze.ProjectRewrite do
     {:ok, %{rewrite | igniter: igniter}}
   end
 
-  @keep_marker "__adze_keep__"
+  @keep_marker_base "__adze_keep"
 
   @doc """
   Shield piped remote calls whose real arity (written args + the piped
@@ -584,23 +585,49 @@ defmodule Adze.ProjectRewrite do
   `foo/2`) looks like `foo/1`. `allowed` maps function name to the list
   of real arities that are being moved. Matching calls get a marker
   inserted into the function name (before a trailing `?`/`!`); `unprotect_calls/1` removes it.
+
+  The marker is chosen so it occurs in no tracked source, so removing it
+  can never touch text that was already there (a string literal, a
+  comment, adze's own source).
   """
   @spec protect_piped_calls(t(), %{atom() => [non_neg_integer()]}) :: t()
   def protect_piped_calls(%__MODULE__{} = rewrite, allowed) when is_map(allowed) do
-    map_elixir_sources(rewrite, fn content ->
+    marker = unused_marker(rewrite)
+
+    rewrite
+    |> map_elixir_sources(fn content ->
       case protect_edits(content, allowed) do
         {_, []} -> content
-        edits -> apply_insertions(edits)
+        edits -> apply_insertions(edits, marker)
       end
     end)
+    |> Map.put(:keep_marker, marker)
   end
 
   @doc "Undo `protect_piped_calls/2`."
   @spec unprotect_calls(t()) :: t()
-  def unprotect_calls(%__MODULE__{} = rewrite) do
-    map_elixir_sources(rewrite, fn content ->
-      String.replace(content, @keep_marker, "")
+  def unprotect_calls(%__MODULE__{keep_marker: nil} = rewrite), do: rewrite
+
+  def unprotect_calls(%__MODULE__{keep_marker: marker} = rewrite) do
+    rewrite
+    |> map_elixir_sources(&String.replace(&1, marker, ""))
+    |> Map.put(:keep_marker, nil)
+  end
+
+  # `__adze_keep__`, or `__adze_keep_<n>__` when some source already
+  # contains the plain one.
+  defp unused_marker(%__MODULE__{igniter: igniter}) do
+    contents =
+      igniter.rewrite
+      |> Rewrite.sources()
+      |> Enum.map(&Rewrite.Source.get(&1, :content))
+
+    Stream.iterate(0, &(&1 + 1))
+    |> Stream.map(fn
+      0 -> @keep_marker_base <> "__"
+      n -> @keep_marker_base <> "_#{n}__"
     end)
+    |> Enum.find(fn marker -> not Enum.any?(contents, &String.contains?(&1, marker)) end)
   end
 
   defp map_elixir_sources(%__MODULE__{igniter: igniter} = rewrite, fun) do
@@ -708,12 +735,12 @@ defmodule Adze.ProjectRewrite do
     if String.ends_with?(str, ["?", "!"]), do: len - 1, else: len
   end
 
-  defp apply_insertions({chars, idxs}) do
+  defp apply_insertions({chars, idxs}, marker) do
     idxs
     |> Enum.sort(:desc)
     |> Enum.reduce(chars, fn idx, chars ->
       {before, rest} = Enum.split(chars, idx)
-      before ++ String.to_charlist(@keep_marker) ++ rest
+      before ++ String.to_charlist(marker) ++ rest
     end)
     |> List.to_string()
   end
