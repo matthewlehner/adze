@@ -33,6 +33,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Concurrent rewrites against different `mix_root`s no longer race on the
   (VM-global) working directory.
 
+### Changed
+
+- `mix adze.install` always installs both skills (`.claude/skills/` and
+  `.agents/skills/`); the `--claude` / `--codex` flags are gone (passing
+  them is harmless). It now writes its instructions only to `AGENTS.md`
+  and leaves `CLAUDE.md` alone. Claude Code reads `AGENTS.md` only when
+  the project has no `CLAUDE.md`; otherwise add `@AGENTS.md` to it.
+
 ### Known limitations
 
 - `extract` doesn't see imports whose module is only known at runtime

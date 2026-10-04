@@ -31,11 +31,14 @@ for `mix adze` instead of hand-editing:
 | Claude Code | `.claude/skills/adze/SKILL.md` |
 | Codex / Pi / OpenCode | `.agents/skills/adze/SKILL.md` |
 
-It also adds an adze section to `AGENTS.md` (creating it if needed). Every
-supported agent, Claude Code included, reads `AGENTS.md`, so that's the only
-agent file adze touches; `CLAUDE.md` is left alone.
+Both skills are always installed, since Claude Code only loads skills from
+`.claude/skills/` and the other agents from `.agents/skills/`.
 
-Install a single platform's skill with `--claude` or `--codex`.
+It also adds an adze section to `AGENTS.md` (creating it if needed), and
+leaves `CLAUDE.md` alone. Codex, Pi and OpenCode read `AGENTS.md`. Claude Code
+(v2.1.277+) reads it too, but only when the project has no `CLAUDE.md`,
+`.claude/CLAUDE.md` or `CLAUDE.local.md`. If yours does, add an `@AGENTS.md`
+line to it so Claude picks up the adze section.
 
 ### Manual install
 

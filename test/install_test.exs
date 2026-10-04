@@ -23,26 +23,26 @@ defmodule Adze.InstallTest do
     |> assert_creates(".agents/skills/adze/SKILL.md", @skill)
   end
 
-  test "--claude installs only the Claude Code skill" do
-    igniter =
+  # Claude Code only loads skills from `.claude/skills/` and Codex/Pi/OpenCode
+  # from `.agents/skills/`, so both are always installed; there are no
+  # per-platform flags. Igniter ignores unknown switches, so the old
+  # `--claude` / `--codex` from earlier docs still give the full install.
+  test "the old per-platform flags still install both skills" do
+    for flag <- ["--claude", "--codex"] do
       test_project()
-      |> install(["--claude"])
+      |> install([flag])
       |> assert_creates(".claude/skills/adze/SKILL.md", @skill)
-
-    refute Map.has_key?(igniter.rewrite.sources, ".agents/skills/adze/SKILL.md")
+      |> assert_creates(".agents/skills/adze/SKILL.md", @skill)
+    end
   end
 
-  # Claude Code reads AGENTS.md, so that's the one agent file adze patches,
-  # whichever platform's skill is installed.
   describe "agent file" do
-    for argv <- [[], ["--claude"], ["--codex"]] do
-      test "#{inspect(argv)} creates AGENTS.md from agents-snippet.md and leaves CLAUDE.md alone" do
-        igniter = test_project() |> install(unquote(argv))
+    test "creates AGENTS.md from agents-snippet.md and leaves CLAUDE.md alone" do
+      igniter = test_project() |> install([])
 
-        assert_creates(igniter, "AGENTS.md")
-        assert content(igniter, "AGENTS.md") =~ String.trim(@snippet)
-        refute Map.has_key?(igniter.rewrite.sources, "CLAUDE.md")
-      end
+      assert_creates(igniter, "AGENTS.md")
+      assert content(igniter, "AGENTS.md") =~ String.trim(@snippet)
+      refute Map.has_key?(igniter.rewrite.sources, "CLAUDE.md")
     end
 
     test "an existing CLAUDE.md is not modified" do

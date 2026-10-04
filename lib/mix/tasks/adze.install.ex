@@ -13,24 +13,15 @@ defmodule Mix.Tasks.Adze.Install.Docs do
 
     ## What it does
 
-    1. Creates a skill file in the appropriate location for your agent platform
-    2. Adds an adze section to `AGENTS.md` (creating it if needed). Every
-       supported agent, Claude Code included, reads `AGENTS.md`, so it's the
-       only agent file adze touches; `CLAUDE.md` is left alone.
-
-    ## Options
-
-    * `--claude` — Install the Claude Code skill (`.claude/skills/adze/SKILL.md`)
-    * `--codex` — Install the Codex/Pi/OpenCode skill (`.agents/skills/adze/SKILL.md`)
-
-    If neither flag is passed, both skills are installed.
+    1. Installs the adze skill where each agent looks for it:
+       `.claude/skills/adze/SKILL.md` (Claude Code) and
+       `.agents/skills/adze/SKILL.md` (Codex, Pi, OpenCode).
+    2. Adds an adze section to `AGENTS.md`, creating it if needed.
 
     ## Example
 
     ```sh
     #{example()}
-    mix igniter.install adze --claude
-    mix igniter.install adze --codex
     ```
     """
   end
@@ -49,8 +40,9 @@ defmodule Mix.Tasks.Adze.Install do
   @external_resource @skill_source_path
   @skill_content File.read!(@skill_source_path)
 
-  @claude_skill_path ".claude/skills/adze/SKILL.md"
-  @codex_skill_path ".agents/skills/adze/SKILL.md"
+  # Claude Code only loads skills from `.claude/skills/`; Codex, Pi and
+  # OpenCode from `.agents/skills/`. Both are always installed.
+  @skill_paths [".claude/skills/adze/SKILL.md", ".agents/skills/adze/SKILL.md"]
   @agents_md "AGENTS.md"
 
   @snippet_path Path.expand("../../../agents-snippet.md", __DIR__)
@@ -62,44 +54,19 @@ defmodule Mix.Tasks.Adze.Install do
     %Igniter.Mix.Task.Info{
       group: :adze,
       example: __MODULE__.Docs.example(),
-      schema: [
-        claude: :boolean,
-        codex: :boolean
-      ],
+      schema: [],
       only: [:dev]
     }
   end
 
   @impl Igniter.Mix.Task
   def igniter(igniter) do
-    claude? = igniter.args.options[:claude]
-    codex? = igniter.args.options[:codex]
-
-    # Default: install both if neither flag is passed
-    {claude?, codex?} =
-      if !claude? && !codex? do
-        {true, true}
-      else
-        {claude? || false, codex? || false}
-      end
-
-    igniter
-    |> maybe_install_claude(claude?)
-    |> maybe_install_codex(codex?)
+    @skill_paths
+    |> Enum.reduce(igniter, fn path, ig ->
+      Igniter.create_new_file(ig, path, @skill_content, on_exists: :skip)
+    end)
     |> patch_agents_md()
-    |> add_completion_notice(claude?, codex?)
-  end
-
-  defp maybe_install_claude(igniter, false), do: igniter
-
-  defp maybe_install_claude(igniter, true) do
-    Igniter.create_new_file(igniter, @claude_skill_path, @skill_content, on_exists: :skip)
-  end
-
-  defp maybe_install_codex(igniter, false), do: igniter
-
-  defp maybe_install_codex(igniter, true) do
-    Igniter.create_new_file(igniter, @codex_skill_path, @skill_content, on_exists: :skip)
+    |> add_completion_notice()
   end
 
   defp patch_agents_md(igniter) do
@@ -123,28 +90,14 @@ defmodule Mix.Tasks.Adze.Install do
     end
   end
 
-  defp installed_files(claude?, codex?) do
-    [
-      claude? && "Skill: #{@claude_skill_path}",
-      codex? && "Skill: #{@codex_skill_path}",
-      "Agent instructions: #{@agents_md}"
-    ]
-    |> Enum.filter(& &1)
-    |> Enum.map_join("\n", &"  • #{&1}")
-  end
-
-  defp add_completion_notice(igniter, claude?, codex?) do
-    platforms =
-      []
-      |> then(fn acc -> if claude?, do: ["Claude Code" | acc], else: acc end)
-      |> then(fn acc -> if codex?, do: ["Codex/Pi/OpenCode" | acc], else: acc end)
-      |> Enum.reverse()
-      |> Enum.join(", ")
+  defp add_completion_notice(igniter) do
+    files =
+      Enum.map(@skill_paths, &"Skill: #{&1}") ++ ["Agent instructions: #{@agents_md}"]
 
     Igniter.add_notice(igniter, """
-    Adze installed for: #{platforms}
+    Adze installed.
 
-    #{installed_files(claude?, codex?)}
+    #{Enum.map_join(files, "\n", &"  • #{&1}")}
 
     ## usage_rules integration (optional)
 
