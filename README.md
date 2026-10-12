@@ -105,7 +105,7 @@ cp deps/adze/skill.md .agents/skills/adze/SKILL.md
 ```
 
 Then append the contents of
-[`agents-snippet.md`](agents-snippet.md) (also at
+[`agents-snippet.md`](https://github.com/matthewlehner/adze/blob/main/agents-snippet.md) (also at
 `deps/adze/agents-snippet.md`) to your `AGENTS.md`, creating it if it
 doesn't exist:
 
