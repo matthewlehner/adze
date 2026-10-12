@@ -16,7 +16,7 @@ defmodule Adze do
 
       def deps do
         [
-          {:adze, "~> 0.1.0"}
+          {:adze, "~> 0.2.0", only: [:dev]}
         ]
       end
 

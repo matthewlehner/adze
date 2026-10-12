@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-10-11
+
 ### Upgrading to 0.2.0
 
 Upgrade with `mix igniter.upgrade adze` instead of `mix deps.update adze`.
@@ -24,14 +26,58 @@ If you upgraded with `mix deps.update`, or use adze as a path dependency
 `mix igniter.install adze` to refresh the files, then search for `adze \w+!`
 yourself.
 
+### Breaking
+
+- CLI write ops (`mv`, `extract`, `rename`, `extract-private`) now write by
+  default. Pass `--dry-run` to preview. The `!` forms (`mv!`, `extract!`,
+  `rename!`, `extract-private!`) are removed and exit with a pointer to the
+  new behaviour. The library API (`Adze.mv/2`, `Adze.mv!/2`, …) is unchanged.
+
 ### Added
 
 - `mix adze.upgrade`, run by `mix igniter.upgrade adze`. Every upgrade
   re-runs the installer; version-specific steps flag anything else that
   needs changing.
+- `--dry-run` (preview a write op) and `--diff` (write, and print the full
+  diffs instead of the summary).
+
+### Changed
+
+- CLI write ops print a summary by default — files touched with +/- line
+  counts, plus dropped directives, promotions and warnings — instead of
+  every diff and the whole new file. `--diff` prints the full output;
+  `--dry-run` still does. JSON output is unchanged.
+- `ls` (text): adjacent clauses of one function render as a single line
+  spanning all of them, e.g. `p mv_error/2   L346–386  (10 clauses)`. JSON
+  output still has one entry per clause.
+- `mix adze.install` always installs both skills (`.claude/skills/` and
+  `.agents/skills/`); the `--claude` / `--codex` flags are gone (passing
+  them is harmless). It now writes its instructions to `AGENTS.md`. Since
+  Claude Code ignores `AGENTS.md` when a `CLAUDE.md` exists, an existing
+  `CLAUDE.md` (or `.claude/CLAUDE.md`) gets an `@AGENTS.md` import instead,
+  and the adze section 0.1.0 wrote into it is removed. It never creates a
+  `CLAUDE.md` or edits `CLAUDE.local.md`.
+- The `AGENTS.md` section is shorter (when to reach for adze, plus the
+  exact skill paths); the skill carries the full reference. The installer
+  no longer suggests `mix usage_rules.sync`, which duplicated the skill.
+- Agent docs (skill, agents snippet) no longer tell agents to dry-run before
+  every write.
+- `skill.md` is about half the size (9.7 KB → 4.8 KB): one entry per op,
+  no recipes that repeat the op descriptions, and refusal details left to
+  the error messages.
+
+### Removed
+
+- `usage-rules.md` is no longer in the package. The skill covers agent use;
+  the library API, error shapes and conventions are in the moduledocs.
 
 ### Fixed
 
+- `extract`: only the members of a brace alias (`alias Foo.{A, B}`) that
+  the extracted code uses are copied to the new module, instead of the
+  whole group.
+- `extract`: without `mix_root`, the derived target path is relative with
+  no `./` prefix (`lib/my_app/foo.ex`, not `./lib/my_app/foo.ex`).
 - `ls`: a multi-line `alias Foo.{Bar, Baz}` renders on one line listing
   every member, instead of spilling raw source across several lines.
 - `extract`: cross-file pipes whose real arity stays in the source are no
@@ -61,37 +107,6 @@ yourself.
 - Concurrent rewrites against different `mix_root`s no longer race on the
   (VM-global) working directory.
 
-### Changed
-
-- Removed `usage-rules.md` from the package. The skill covers agent use;
-  the library API, error shapes and conventions are in the moduledocs.
-- CLI write ops (`mv`, `extract`, `rename`, `extract-private`) now write by
-  default. Pass `--dry-run` to preview. The `!` forms (`mv!`, `extract!`,
-  `rename!`, `extract-private!`) are removed and exit with a pointer to the
-  new behaviour. The library API (`Adze.mv/2`, `Adze.mv!/2`, …) is unchanged.
-- Agent docs (skill, agents snippet) no longer tell agents to dry-run before
-  every write.
-- `skill.md` is about half the size (9.7 KB → 4.8 KB): one entry per op,
-  no recipes that repeat the op descriptions, and refusal details left to
-  the error messages.
-- `ls` (text): adjacent clauses of one function render as a single line
-  spanning all of them, e.g. `p mv_error/2   L346–386  (10 clauses)`. JSON
-  output still has one entry per clause.
-- CLI write ops print a summary by default — files touched with +/- line
-  counts, plus dropped directives, promotions and warnings — instead of
-  every diff and the whole new file. `--diff` prints the full output;
-  `--dry-run` still does. JSON output is unchanged.
-- `mix adze.install` always installs both skills (`.claude/skills/` and
-  `.agents/skills/`); the `--claude` / `--codex` flags are gone (passing
-  them is harmless). It now writes its instructions to `AGENTS.md`. Since
-  Claude Code ignores `AGENTS.md` when a `CLAUDE.md` exists, an existing
-  `CLAUDE.md` (or `.claude/CLAUDE.md`) gets an `@AGENTS.md` import instead,
-  and the adze section 0.1.0 wrote into it is removed. It never creates a
-  `CLAUDE.md` or edits `CLAUDE.local.md`.
-- The `AGENTS.md` section is shorter (when to reach for adze, plus the
-  exact skill paths); the skill carries the full reference. The installer
-  no longer suggests `mix usage_rules.sync`, which duplicated the skill.
-
 ### Known limitations
 
 - `extract` doesn't see imports whose module is only known at runtime
@@ -112,4 +127,6 @@ yourself.
 - `mix adze rename` / `rename!` — rename a module across the entire project
 - `mix adze extract-private` / `extract-private!` — flip `def` → `defp` when safe
 
+[Unreleased]: https://github.com/matthewlehner/adze/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/matthewlehner/adze/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/matthewlehner/adze/releases/tag/v0.1.0

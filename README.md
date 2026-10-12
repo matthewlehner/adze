@@ -78,7 +78,7 @@ Add `adze` as a dev dependency:
 ```elixir
 def deps do
   [
-    {:adze, "~> 0.1.0", only: [:dev]}
+    {:adze, "~> 0.2.0", only: [:dev]}
   ]
 end
 ```
